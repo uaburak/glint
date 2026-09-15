@@ -13,14 +13,17 @@ Glint yalnızca mesajlaşma uygulamalarıyla sınırlı değildir: Dock simgesin
 
 | Parça | Yöntem |
 |---|---|
-| Okunmamış sayısı | Uygulamaların Dock rozeti saniyede 4 kez okunur: LaunchServices üzerinden, Erişilebilirlik izni verildiyse ayrıca doğrudan Dock'tan. Uygulamaların verisine dokunulmaz. |
-| Yeni bildirim | Bir uygulamanın rozetindeki sayı arttığında. Uygulama yeni açıldıysa ilk 20 saniyedeki artışlar eski bildirimlerin yüklenmesi sayılır ve bildirilmez. |
+| Okunmamış sayısı | **Sistem SQLite Veritabanı:** Tam Disk Erişimi (FDA) verildiğinde doğrudan macOS'un `group.com.apple.usernoted/db2/db` veritabanı olay tabanlı (WAL izleme ile sıfır gecikmeli) okunur. **Dock / LaunchServices Fallback:** İzin verilmediğinde veya ek teyit olarak LaunchServices ve Erişilebilirlik üzerinden Dock taranır. |
+| Yeni bildirim | Sistem veritabanı veya rozetteki sayı arttığında. Uygulama yeni açıldıysa ilk 20 saniyedeki artışlar eski bildirimlerin yüklenmesi sayılır ve bildirilmez. |
 | "Uzakta mıyım?" | Klavye/fare hareketsizlik süresi (varsayılan 2 dk) veya kilitli ekran. |
 
 ## Kurulum
 
 1. `Glint.xcodeproj`'yi Xcode'da aç → **Glint** şeması → **Run**. İlk açılışta ayarlar penceresi kendiliğinden açılır; sonra menü çubuğundaki zil → **Ayarlar…**
-2. **Genel Ayarlar** → **Erişilebilirlik** → **İzin Ver…** (önerilir; bazı uygulamaların rozeti yalnızca Dock'ta görünür). İstersen **Mac açıldığında otomatik başlat**.
+2. **Genel Ayarlar** → **İzinler**:
+   - **Erişilebilirlik** → **İzin Ver…** (önerilir; Dock rozetlerini okumak için).
+   - **Tam Disk Erişimi (SQLite Veritabanı)** → **Ayarları Aç…** (isteğe bağlı; macOS'un doğrudan sistem bildirim veritabanını kökten ve anlık dinlemek için).
+   - İstersen **Mac açıldığında otomatik başlat**.
 3. **Uygulamalar** → izlemek istediğin uygulamaları **Uygulama Ekle** ile ekle; her birine tıklayıp rengini, sesini ve ses seviyesini seç.
 4. **Alarm Ayarları** → alarm efektini ve sesini seç; **Alarmı Şimdi Test Et** ile dene.
 5. **Algılama** → ne kadar hareketsiz kalınca uzakta sayılacağını seç.
@@ -60,7 +63,7 @@ Ayarlar penceresi System Settings gibidir: sayfalar solda kenar çubuğunda, say
 
 **Genel Ayarlar**
 - İzlemeyi aç/kapat, oturum açılınca başlat, Mac'in kendiliğinden uyumasını engelle
-- Erişilebilirlik izni durumu
+- Erişilebilirlik ve Tam Disk Erişimi izin durumları
 
 Bildirim ve alarm birbirinden bağımsızdır: bir uygulamanın bildirimini kapatmak alarmını kapatmaz.
 
@@ -70,11 +73,20 @@ Zil simgesinin yanında toplam okunmamış sayısı görünür (Görünüm Ayarl
 
 ## Uygulamaların kendi bildirimlerini susturmak (bir kerelik)
 
-macOS bir uygulamanın başka bir uygulamanın bildirimlerini kapatmasına izin vermez. Ayarlar → **Uygulamalar** → uygulamanın sayfasında **Bildirim Ayarlarını Aç…** düğmesine bas → uyarı stilini **Yok** yap ve bildirim sesini kapat. **"Uygulama simgesinde işaret göster" (badge) açık kalmalı**; kapanırsa yeni bildirimler algılanamaz.
+macOS bir uygulamanın başka bir uygulamanın bildirimlerini kapatmasına izin vermez; bunu uygulamanın kendi bildirim ayarından yaparsın. Ayarlar → **Uygulamalar** → uygulamanın sayfasında **Bildirim Ayarlarını Aç…** düğmesine bas ve:
+
+| Ayar (macOS 27) | Durum | Neden |
+|---|---|---|
+| Bildirimlere izin ver | Açık | Kapanırsa simge işareti ve kayıt da gelmez. |
+| **Masaüstü** | **Kapalı** | macOS'un balonu çıkmaz, yüzen bildirimi Glint gösterir. |
+| **Bildirim Merkezi** | **Açık** | Bildirim geçmişte kalır; Glint mesajın içeriğini buradan okur (Tam Disk Erişimi gerekir). |
+| **Uygulama simgesi işareti** | **Açık** | Glint yeni bildirimi simgedeki sayıdan anlar; kapanırsa algılanamaz. |
+| Bildirim için ses çal | Kapalı (önerilir) | Glint kendi sesini çalar. |
+| Kilitli Ekran | İsteğe bağlı | Glint'i etkilemez. |
 
 ## Sınırlar
 
 - **Mac uyanık olmalı.** Uygulama sistemin kendiliğinden uyumasını engeller ama MacBook kapağı kapanınca (harici ekran yoksa) Mac uyur ve izleme durur.
 - **Kilit ekranında görüntü çıkmaz.** macOS hiçbir uygulamanın kilit ekranının üstünde görünmesine izin vermez; ekran kilitliyken sadece alarm sesi duyulur.
-- **Uygulama açık olmalı.** Kapalı bir uygulamanın rozeti okunamaz.
+- **Uygulama açık olmalı (Dock modunda).** Dock/LaunchServices modunda kapalı bir uygulamanın rozeti okunamaz; ancak Tam Disk Erişimi verilip sistem SQLite veritabanı aktif olduğunda arka planda gelen sistem kayıtları yakalanabilir.
 - **Rozet gösteren uygulamalar çalışır.** Dock simgesinde sayı göstermeyen bir uygulamanın bildirimleri algılanamaz. Rozetteki sayı uygulamanın kendi ayarlarına göre değişir (ör. Teams'te sohbetler ve bahsedilmeler).

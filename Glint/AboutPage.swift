@@ -62,6 +62,7 @@ struct AboutPage: View {
                 }
                 LabeledContent("İzlenen uygulama", value: "\(WatchedApp.listed.count)")
                 LabeledContent("Toplam okunmamış", value: "\(controller.unread)")
+                LabeledContent("İzleme Kaynağı", value: controller.hasFullDiskAccess ? "Sistem SQLite (usernoted)" : "Dock / LaunchServices")
                 LabeledContent("Sen", value: controller.userAway ? "Uzaktasın" : "Bilgisayar başındasın")
                 LabeledContent("Son olay", value: controller.lastEvent)
             }

@@ -14,6 +14,8 @@ enum Pref {
     static let notifyGlow = "notifyGlow"
     static let notifyGlowIntensity = "notifyGlowIntensity"
     static let notifyGlowSeconds = "notifyGlowSeconds"
+    static let notifyBanner = "notifyBanner"
+    static let notifyBannerPosition = "notifyBannerPosition"
     static let notifySound = "notifySound"
     static let notifyVolume = "notifyVolume"
     static let showMenuBarCount = "showMenuBarCount"
@@ -34,6 +36,8 @@ enum Pref {
         notifyGlow: true,
         notifyGlowIntensity: 0.8,
         notifyGlowSeconds: 1.0,
+        notifyBanner: true,
+        notifyBannerPosition: BannerPosition.topRight.rawValue,
         notifySound: "builtin.ding",
         notifyVolume: 0.6,
         showMenuBarCount: true,
@@ -80,6 +84,43 @@ enum AlarmStyle: String, CaseIterable, Identifiable {
     }
 }
 
+enum BannerPosition: String, CaseIterable, Identifiable, Codable {
+    case topRight = "topRight"
+    case topCenter = "topCenter"
+    case topLeft = "topLeft"
+    case bottomRight = "bottomRight"
+    case bottomCenter = "bottomCenter"
+    case bottomLeft = "bottomLeft"
+    /// Waiting in the notch (MacBooks with one): it grows with the app's icon, hovering opens the stack.
+    case notch = "notch"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .topRight: "Üst Sağ"
+        case .topCenter: "Üst Orta"
+        case .topLeft: "Üst Sol"
+        case .bottomRight: "Alt Sağ"
+        case .bottomCenter: "Alt Orta"
+        case .bottomLeft: "Alt Sol"
+        case .notch: "Çentik"
+        }
+    }
+
+    var iconName: String {
+        switch self {
+        case .topRight: "arrow.up.right.square.fill"
+        case .topCenter: "arrow.up.square.fill"
+        case .topLeft: "arrow.up.left.square.fill"
+        case .bottomRight: "arrow.down.right.square.fill"
+        case .bottomCenter: "arrow.down.square.fill"
+        case .bottomLeft: "arrow.down.left.square.fill"
+        case .notch: "macbook"
+        }
+    }
+}
+
 /// A snapshot of the settings, read fresh on every monitoring tick.
 struct AppSettings {
     var idleThreshold: TimeInterval
@@ -95,6 +136,8 @@ struct AppSettings {
     var notifyGlowIntensity: Double
     /// nil = keep glowing until the messages are read.
     var notifyGlowDuration: TimeInterval?
+    var notifyBanner: Bool
+    var notifyBannerPosition: BannerPosition
     var notifySoundID: String
     var notifyVolume: Double
 
@@ -113,6 +156,8 @@ struct AppSettings {
             notifyGlow: d.bool(forKey: Pref.notifyGlow),
             notifyGlowIntensity: d.double(forKey: Pref.notifyGlowIntensity),
             notifyGlowDuration: glowSeconds > 0 ? glowSeconds : nil,
+            notifyBanner: d.bool(forKey: Pref.notifyBanner),
+            notifyBannerPosition: BannerPosition(rawValue: d.string(forKey: Pref.notifyBannerPosition) ?? "") ?? .topRight,
             notifySoundID: d.string(forKey: Pref.notifySound) ?? "builtin.ding",
             notifyVolume: d.double(forKey: Pref.notifyVolume)
         )

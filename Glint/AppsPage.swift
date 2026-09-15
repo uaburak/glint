@@ -200,7 +200,7 @@ struct AppDetailPage: View {
                 LabeledContent("macOS bildirimleri") {
                     Button("Bildirim Ayarlarını Aç…") { app.openNotificationSettings() }
                 }
-                Hint("Glint bildirimi yeni bildirimde ekran kenarında ışıma ve ses verir. Alarm, bilgisayar başında değilken tam ekran uyarı gösterir. Uygulamanın kendi bildirimlerini iki kez görmemek için macOS'ta kapatabilirsin; “Uygulama simgesinde işaret göster” açık kalmalı.")
+                Hint("Glint bildirimi yeni bildirimde ekran kenarında ışıma ve ses verir. Alarm, bilgisayar başında değilken tam ekran uyarı gösterir. Aynı bildirimi iki kez görmemek için macOS ayarlarında “Masaüstü” kutusunun işaretini kaldır; “Bildirim Merkezi” ve “Uygulama simgesi işareti” açık kalmalı.")
             }
 
             Section("Görünüm") {

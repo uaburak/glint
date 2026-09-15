@@ -133,6 +133,20 @@ struct GeneralPage: View {
                     }
                 }
                 Hint("Rozetleri doğrudan Dock'tan da okuyabilmek için gerekir; bazı uygulamaların rozeti yalnızca orada görünür. İzin olmadan Teams gibi uygulamalar yine algılanır.")
+
+                LabeledContent("Tam Disk Erişimi (SQLite Veritabanı)") {
+                    if controller.hasFullDiskAccess {
+                        Label("Aktif (Sistem Kökü)", systemImage: "checkmark.shield.fill")
+                            .foregroundStyle(.green)
+                    } else {
+                        Button("Ayarları Aç…") {
+                            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
+                                NSWorkspace.shared.open(url)
+                            }
+                        }
+                    }
+                }
+                Hint("macOS'un doğrudan sistem bildirim veritabanını (usernoted SQLite) okumak ve anlık olay tabanlı izleme yapmak için gereklidir. İsteğe bağlıdır; verilmediğinde Dock ve LaunchServices üzerinden izleme yapılır.")
             }
         }
         // The user may have changed it in System Settings meanwhile.
