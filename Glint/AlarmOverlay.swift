@@ -22,7 +22,8 @@ final class AlarmOverlay {
                 window.backgroundColor = .clear
                 window.hasShadow = false
                 window.isReleasedWhenClosed = false
-                window.contentView = NSHostingView(rootView: AlarmView(unread: unread, appName: appName, style: settings.alarmStyle) { [weak self] in
+                // A single click dismisses it, even though Glint isn't the active app.
+                window.contentView = FirstMouseHostingView(rootView: AlarmView(unread: unread, appName: appName, style: settings.alarmStyle) { [weak self] in
                     self?.dismiss()
                 })
                 window.setFrame(screen.frame, display: true)

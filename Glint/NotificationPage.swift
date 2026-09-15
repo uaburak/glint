@@ -11,6 +11,7 @@ struct NotificationPage: View {
     @AppStorage(Pref.notifyBannerPosition) private var bannerPosition = BannerPosition.topRight.rawValue
     @AppStorage(Pref.notifySound) private var sound = "builtin.ding"
     @AppStorage(Pref.notifyVolume) private var volume = 0.6
+    @AppStorage(Pref.badgeFallback) private var badgeFallback = true
 
     private var currentPosition: BannerPosition {
         BannerPosition(rawValue: bannerPosition) ?? .topRight
@@ -21,6 +22,8 @@ struct NotificationPage: View {
             Section {
                 Toggle("Yeni bildirimlerde Glint bildirimi göster", isOn: $enabled)
                 Hint("Uygulamalar sayfasındaki bir uygulamaya bildirim geldiğinde ekran kenarında o uygulamanın renginde ışıma ve bildirim sesi verilir. Tam Disk Erişimi varsa Glint bildirimleri doğrudan macOS'un Bildirim Merkezi kaydından okur; yoksa Dock simgesindeki sayının artmasından anlar. Her uygulama kendi sayfasından ayrıca kapatılabilir.")
+                Toggle("Bildirim kaydı gelmezse simgedeki sayıdan bildir", isOn: $badgeFallback)
+                Hint("Tam Disk Erişimi varken bir uygulamanın simgesindeki sayı artıp 5 saniye içinde bildirim kaydı gelmezse (ör. uygulamanın “Bildirim Merkezi” ayarı kapalıysa) Glint yine de okunmamış sayısıyla bildirir. Sessize alınmış sohbetler de sayıyı artırıyorsa fazladan bildirim görebilirsin.")
             }
 
             Section("Yüzen Bildirim (Banner)") {

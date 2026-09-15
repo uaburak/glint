@@ -35,28 +35,22 @@ struct WatchedApp: Identifiable, Hashable {
         return bundleIDs.first ?? ""
     }
 
-    var runningApp: NSRunningApplication? {
-        runningApp(in: NSWorkspace.shared.runningApplications)
-    }
-
-    func runningApp(in apps: [NSRunningApplication]) -> NSRunningApplication? {
-        apps.first { app in
-            guard let bid = app.bundleIdentifier, !app.isTerminated else { return false }
-            return bundleIDs.contains(bid)
-        }
-    }
-
-    var appIcon: NSImage? {
-        if let url = installedURL {
-            return NSWorkspace.shared.icon(forFile: url.path)
+    @MainActor var runningApp: NSRunningApplication? {
+        for bid in bundleIDs {
+            if let app = RunningApps.app(withBundleID: bid) {
+                return app
+            }
         }
         return nil
     }
 
+    @MainActor var appIcon: NSImage? {
+        installedURL.map(AppIconCache.icon(forAppAt:))
+    }
+
     /// 16x16 formatted native full-color icon for macOS menu items.
-    var menuIcon: NSImage? {
-        guard let url = installedURL else { return nil }
-        let raw = NSWorkspace.shared.icon(forFile: url.path)
+    @MainActor var menuIcon: NSImage? {
+        guard let raw = appIcon else { return nil }
         let targetSize = NSSize(width: 16, height: 16)
         let cleanImage = NSImage(size: targetSize)
         cleanImage.lockFocus()
@@ -78,7 +72,7 @@ struct WatchedApp: Identifiable, Hashable {
     }
 
     /// Launches the application, or brings it to the foreground (reopening its window) if it's running.
-    func openApplication() {
+    @MainActor func openApplication() {
         guard let url = installedURL ?? runningApp?.bundleURL else { return }
         let config = NSWorkspace.OpenConfiguration()
         config.activates = true
@@ -158,28 +152,32 @@ struct WatchedAppConfig: Codable, Equatable {
     var enabled: Bool
     /// The full-screen alarm when a notification arrives while the user is away.
     var alarmEnabled: Bool
+    /// The alarm rings only for notifications with an important word (Odak ve Öncelik).
+    var alarmOnlyImportant: Bool
     var glowColorHex: String
     /// nil = the default sound from Bildirim Ayarları.
     var soundID: String?
     /// nil = the default volume from Bildirim Ayarları.
     var volume: Double?
 
-    init(enabled: Bool = true, alarmEnabled: Bool = true, glowColorHex: String, soundID: String? = nil, volume: Double? = nil) {
+    init(enabled: Bool = true, alarmEnabled: Bool = true, alarmOnlyImportant: Bool = false, glowColorHex: String, soundID: String? = nil, volume: Double? = nil) {
         self.enabled = enabled
         self.alarmEnabled = alarmEnabled
+        self.alarmOnlyImportant = alarmOnlyImportant
         self.glowColorHex = glowColorHex
         self.soundID = soundID
         self.volume = volume
     }
 
     enum CodingKeys: String, CodingKey {
-        case enabled, alarmEnabled, glowColorHex, soundID, volume
+        case enabled, alarmEnabled, alarmOnlyImportant, glowColorHex, soundID, volume
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
         self.alarmEnabled = try container.decodeIfPresent(Bool.self, forKey: .alarmEnabled) ?? true
+        self.alarmOnlyImportant = try container.decodeIfPresent(Bool.self, forKey: .alarmOnlyImportant) ?? false
         self.glowColorHex = try container.decode(String.self, forKey: .glowColorHex)
         self.soundID = try container.decodeIfPresent(String.self, forKey: .soundID)
         self.volume = try container.decodeIfPresent(Double.self, forKey: .volume)
@@ -276,6 +274,62 @@ final class WatchedAppStore {
         if let data = try? JSONEncoder().encode(saved) {
             UserDefaults.standard.set(data, forKey: Self.addedAppsKey)
         }
+    }
+}
+
+extension WatchedAppConfig {
+    /// Whether Glint follows the app at all: for its notification, its alarm or both.
+    var isWatched: Bool { enabled || alarmEnabled }
+}
+
+/// Running apps by bundle ID. Each property read on an `NSRunningApplication` is a LaunchServices
+/// lookup, and scanning every running app on each poll was most of Glint's CPU time; the map is
+/// rebuilt when an app launches or quits (and every few seconds, in case a notice was missed).
+@MainActor
+enum RunningApps {
+    private static let maxAge: TimeInterval = 5
+    private static var byBundleID: [String: NSRunningApplication] = [:]
+    private static var builtAt = Date.distantPast
+    private static var observers: [NSObjectProtocol] = []
+
+    static func app(withBundleID bundleID: String) -> NSRunningApplication? {
+        if Date().timeIntervalSince(builtAt) > maxAge {
+            rebuild()
+        }
+        return byBundleID[bundleID]
+    }
+
+    private static func rebuild() {
+        if observers.isEmpty {
+            let center = NSWorkspace.shared.notificationCenter
+            observers = [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification].map { name in
+                center.addObserver(forName: name, object: nil, queue: .main) { _ in
+                    MainActor.assumeIsolated { RunningApps.builtAt = .distantPast }
+                }
+            }
+        }
+        var map: [String: NSRunningApplication] = [:]
+        for app in NSWorkspace.shared.runningApplications where !app.isTerminated {
+            if let bundleID = app.bundleIdentifier, map[bundleID] == nil {
+                map[bundleID] = app
+            }
+        }
+        byBundleID = map
+        builtAt = Date()
+    }
+}
+
+/// App icons by location. `NSWorkspace` loads a new image on every call, and banners and the notch
+/// ask for them each time they redraw.
+@MainActor
+enum AppIconCache {
+    private static var icons: [URL: NSImage] = [:]
+
+    static func icon(forAppAt url: URL) -> NSImage {
+        if let icon = icons[url] { return icon }
+        let icon = NSWorkspace.shared.icon(forFile: url.path)
+        icons[url] = icon
+        return icon
     }
 }
 

@@ -73,10 +73,20 @@ final class StatusMenuManager: NSObject, NSMenuDelegate {
         menu.addItem(header)
         menu.addItem(.separator())
 
-        let apps = WatchedApp.listed.filter {
-            let config = WatchedAppStore.shared.config(for: $0)
-            return config.enabled || config.alarmEnabled
+        // Problems and quiet mode first: they explain the menu bar symbol.
+        if let controller, !controller.healthIssues.isEmpty || controller.quietReason != nil {
+            for issue in controller.healthIssues {
+                let item = addItem(issue.title, action: #selector(fixHealthIssue(_:)), image: symbol("exclamationmark.triangle.fill"))
+                item.toolTip = issue.detail
+                item.representedObject = issue
+            }
+            if let reason = controller.quietReason {
+                addItem("Sessiz mod: \(reason.title)", action: #selector(openSettings(_:)), image: symbol("moon.fill"))
+            }
+            menu.addItem(.separator())
         }
+
+        let apps = WatchedApp.listed.filter { WatchedAppStore.shared.config(for: $0).isWatched }
         if apps.isEmpty {
             let empty = NSMenuItem(title: "İzlenen uygulama yok", action: nil, keyEquivalent: "")
             empty.isEnabled = false
@@ -145,6 +155,17 @@ final class StatusMenuManager: NSObject, NSMenuDelegate {
     @objc private func openApp(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String else { return }
         WatchedApp.find(byID: id)?.openApplication()
+    }
+
+    /// Fixes the problem where a button can (System Settings); otherwise shows it on the Hakkında page.
+    @objc private func fixHealthIssue(_ sender: NSMenuItem) {
+        guard let issue = sender.representedObject as? HealthIssue else { return }
+        if issue.actionTitle != nil {
+            issue.performAction()
+        } else {
+            UserDefaults.standard.set(SettingsPage.about.rawValue, forKey: "settingsPage")
+            openSettings(sender)
+        }
     }
 
     @objc private func togglePause(_ sender: Any?) {

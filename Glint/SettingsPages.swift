@@ -92,6 +92,8 @@ struct GeneralPage: View {
     let controller: AlarmController
     @AppStorage(Pref.preventSleep) private var preventSleep = true
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
+    /// Why switching "open at login" failed, until it's tried again.
+    @State private var loginItemError: String?
 
     var body: some View {
         Form {
@@ -111,12 +113,22 @@ struct GeneralPage: View {
                             } else {
                                 try service.unregister()
                             }
-                        } catch {}
+                            loginItemError = nil
+                        } catch {
+                            loginItemError = error.localizedDescription
+                        }
                         if service.status == .requiresApproval {
+                            // Not a failure: macOS wants the user's approval in System Settings.
+                            loginItemError = nil
                             SMAppService.openSystemSettingsLoginItems()
                         }
                         launchAtLogin = service.status == .enabled
                     }
+                if let loginItemError {
+                    Label("Değiştirilemedi: \(loginItemError)", systemImage: "exclamationmark.triangle.fill")
+                        .font(.callout)
+                        .foregroundStyle(.orange)
+                }
                 Toggle("Mac'in kendiliğinden uyumasını engelle", isOn: $preventSleep)
                 Hint("İzleme açıkken Mac kendiliğinden uyku moduna geçmez (ekran yine kararabilir). MacBook kapağı kapatıldığında Mac uyur.")
             }
@@ -127,9 +139,7 @@ struct GeneralPage: View {
                         Label("İzin verildi", systemImage: "checkmark.circle.fill")
                             .foregroundStyle(.green)
                     } else {
-                        Button("İzin Ver…") {
-                            AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
-                        }
+                        Button("İzin Ver…", action: SystemSettings.requestAccessibility)
                     }
                 }
                 Hint("Rozetleri doğrudan Dock'tan da okuyabilmek için gerekir; bazı uygulamaların rozeti yalnızca orada görünür. İzin olmadan Teams gibi uygulamalar yine algılanır.")
@@ -139,14 +149,15 @@ struct GeneralPage: View {
                         Label("Aktif (Sistem Kökü)", systemImage: "checkmark.shield.fill")
                             .foregroundStyle(.green)
                     } else {
-                        Button("Ayarları Aç…") {
-                            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
-                                NSWorkspace.shared.open(url)
-                            }
-                        }
+                        Button("Ayarları Aç…", action: SystemSettings.openFullDiskAccess)
                     }
                 }
                 Hint("macOS'un doğrudan sistem bildirim veritabanını (usernoted SQLite) okumak ve anlık olay tabanlı izleme yapmak için gereklidir. İsteğe bağlıdır; verilmediğinde Dock ve LaunchServices üzerinden izleme yapılır.")
+            }
+
+            Section("Kısayollar") {
+                ForEach(ShortcutAction.allCases) { ShortcutRecorder(action: $0) }
+                Hint("Hangi uygulama öndeyse çalışır. Atamak için düğmeye tıklayıp tuşlara bas (⌘, ⌥ ya da ⌃ ile birlikte); Esc vazgeçer. “Son bildirimi aç” en yeni bildirimin uygulamasını açar, “Tüm bildirimleri temizle” bildirimleri, ışımayı ve çalan alarmı kapatır.")
             }
         }
         // The user may have changed it in System Settings meanwhile.
@@ -170,7 +181,7 @@ struct DetectionPage: View {
                     }
                 }
                 Toggle("Ekran kilitliyse anında uzakta say", isOn: $lockCountsAsAway)
-                Hint("Klavye veya fareye bu süre boyunca dokunmadığında uzakta sayılırsın. Bilgisayar başındayken alarm çalmaz, sadece kenar ışıması bildirimi yapılır.")
+                Hint("Klavye veya fareye bu süre boyunca dokunmadığında uzakta sayılırsın. Bilgisayar başındayken alarm çalmaz, sadece kenar ışıması bildirimi yapılır. Uzaktayken çalan bir alarmdan sonra klavyeye ya da fareye dokunana kadar uzakta sayılmaya devam edersin.")
             }
 
             Section {
@@ -193,6 +204,7 @@ struct AlarmPage: View {
     let controller: AlarmController
     @AppStorage(Pref.alarmStyle) private var style = AlarmStyle.flash.rawValue
     @AppStorage(Pref.alarmSeconds) private var seconds = 5.0
+    @AppStorage(Pref.alarmRepeatMinutes) private var repeatMinutes = 0.0
     @AppStorage(Pref.alarmSound) private var sound = AlarmSoundLibrary.defaultID
     @AppStorage(Pref.alarmVolume) private var volume = 0.5
     @AppStorage(Pref.overrideSystemVolume) private var overrideSystemVolume = true
@@ -224,6 +236,17 @@ struct AlarmPage: View {
                         Text("\(Int($0)) saniye").tag($0)
                     }
                 }
+            }
+
+            Section("Tekrar") {
+                Picker("Alarmı tekrarla", selection: $repeatMinutes) {
+                    Text("Tekrarlama").tag(0.0)
+                    Divider()
+                    ForEach(choices([1, 2, 5, 10, 15, 30], including: repeatMinutes).filter { $0 > 0 }, id: \.self) {
+                        Text("\(Int($0)) dakikada bir").tag($0)
+                    }
+                }
+                Hint("Uzaktayken gelen bildirim okunmadıkça alarm bu aralıkla yeniden çalar; klavyeye ya da fareye dokunduğunda durur. Sessiz modda, önemli bir bildirim değilse tekrar etmez.")
             }
 
             Section("Ses") {
@@ -270,12 +293,10 @@ private struct AlarmAppRow: View {
             Text(app.name)
                 .font(.system(.body, weight: .medium))
             if !config.enabled {
-                Text("Bildirim Kapalı")
-                    .font(.system(size: 10, weight: .medium))
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 1)
-                    .background(Color.orange.opacity(0.15), in: Capsule())
-                    .foregroundStyle(.orange)
+                tag("Bildirim Kapalı", color: .orange)
+            }
+            if config.alarmEnabled && config.alarmOnlyImportant {
+                tag("Yalnızca önemli", color: .indigo)
             }
 
             Spacer()
@@ -296,5 +317,14 @@ private struct AlarmAppRow: View {
             .labelsHidden()
         }
         .padding(.vertical, 2)
+    }
+
+    private func tag(_ text: String, color: Color) -> some View {
+        Text(text)
+            .font(.system(size: 10, weight: .medium))
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1)
+            .background(color.opacity(0.15), in: Capsule())
+            .foregroundStyle(color)
     }
 }

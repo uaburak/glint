@@ -12,6 +12,15 @@ final class AppBadgeReader {
     private typealias CreateASN = @convention(c) (CFAllocator?, pid_t) -> Unmanaged<CFTypeRef>?
     private typealias CopyItem = @convention(c) (Int32, CFTypeRef, CFString) -> Unmanaged<CFTypeRef>?
 
+    /// How long an Accessibility request to the Dock may take. The default, 6 s, would freeze Glint
+    /// for as long as the Dock hangs or restarts.
+    private static let dockTimeout: Float = 0.5
+    /// After a request times out, the Dock is left alone this long.
+    private static let dockBackoff: TimeInterval = 3
+    /// How long a tile's bundle ID is trusted before its URL is read again, in case the Dock reuses
+    /// a tile's element for another app.
+    private static let tileMappingLifetime: TimeInterval = 30
+
     private static let launchServices: (createASN: CreateASN, copyItem: CopyItem)? = {
         let path = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/LaunchServices"
         guard let handle = dlopen(path, RTLD_NOW),
@@ -23,17 +32,36 @@ final class AppBadgeReader {
     private var cachedASNs: [pid_t: CFTypeRef] = [:]
     private var cachedCLIASNs: [pid_t: String] = [:]
     private var dockElement: AXUIElement?
-    /// Badge count per bundle ID, from the last `refreshDock()`.
+    private var dockUnresponsiveUntil = Date.distantPast
+    /// Badge count per bundle ID, from the last `refreshDock(watching:)`.
     private var dockBadges: [String: Int] = [:]
+    /// Each Dock tile's bundle ID, so tiles' URLs aren't read on every poll.
+    private var tileBundleIDs: [AXUIElement: String] = [:]
+    private var tileBundleIDsReadAt = Date.distantPast
     /// Dock tile URL → bundle ID ("" for tiles that aren't apps), so each bundle is opened once.
-    private var bundleIDs: [URL: String] = [:]
+    private var urlBundleIDs: [URL: String] = [:]
 
-    /// Snapshots the badge of every Dock tile. Call once per poll, before `read`.
-    /// Returns false without Accessibility permission; then only LaunchServices is used.
+    init() {
+        // Applies to this process's Accessibility requests only.
+        AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), Self.dockTimeout)
+    }
+
+    /// Snapshots the badges of the Dock tiles of the `watching` bundle IDs. Call once per poll, before
+    /// `read`. Returns false without Accessibility permission; then only LaunchServices is used.
     @discardableResult
-    func refreshDock() -> Bool {
-        dockBadges.removeAll(keepingCapacity: true)
-        guard AXIsProcessTrusted() else { return false }
+    func refreshDock(watching watched: Set<String>) -> Bool {
+        guard AXIsProcessTrusted() else {
+            dockBadges.removeAll()
+            return false
+        }
+        guard !watched.isEmpty else {
+            dockBadges.removeAll()
+            return true
+        }
+        let now = Date()
+        // While the Dock doesn't answer, the last badges stand, rather than dropping to zero and
+        // coming back as new notifications.
+        guard now >= dockUnresponsiveUntil else { return true }
 
         var tileGroups = dockElement.flatMap(children)
         if tileGroups == nil {
@@ -43,30 +71,58 @@ final class AppBadgeReader {
             tileGroups = dockElement.flatMap(children)
         }
 
-        for group in tileGroups ?? [] {
-            for tile in children(of: group) ?? [] {
-                guard let url = attribute(tile, "AXURL") as? URL else { continue }
-                let bundleID = bundleID(for: url)
-                guard !bundleID.isEmpty else { continue }
+        if now.timeIntervalSince(tileBundleIDsReadAt) > Self.tileMappingLifetime {
+            tileBundleIDs.removeAll()
+            tileBundleIDsReadAt = now
+        }
+        var badges: [String: Int] = [:]
+        var tiles: [AXUIElement: String] = [:]
+        for group in tileGroups ?? [] where now >= dockUnresponsiveUntil {
+            for tile in children(of: group) ?? [] where now >= dockUnresponsiveUntil {
+                let bundleID: String
+                if let known = tileBundleIDs[tile] {
+                    bundleID = known
+                } else if let url = attribute(tile, "AXURL") as? URL {
+                    bundleID = self.bundleID(for: url)
+                } else {
+                    continue // A separator, or the request failed: asked again next time.
+                }
+                tiles[tile] = bundleID
+                guard watched.contains(bundleID) else { continue }
                 let count = Self.count(fromLabelValue: attribute(tile, "AXStatusLabel"))
-                dockBadges[bundleID] = max(dockBadges[bundleID] ?? 0, count)
+                badges[bundleID] = max(badges[bundleID] ?? 0, count)
             }
         }
+        guard now >= dockUnresponsiveUntil else { return true }
+        dockBadges = badges
+        tileBundleIDs = tiles
         return true
     }
 
-    /// Unread count of a running app: the badge number, 1 for a non-numeric badge, 0 for none.
-    func read(_ app: NSRunningApplication) -> Int {
-        let dockCount = app.bundleIdentifier.flatMap { dockBadges[$0] } ?? 0
+    /// Unread count of a running app with any of `bundleIDs`: the badge number, 1 for a non-numeric
+    /// badge, 0 for none.
+    func read(_ app: NSRunningApplication, bundleIDs: [String]) -> Int {
+        let dockCount = bundleIDs.compactMap { dockBadges[$0] }.max() ?? 0
         return max(dockCount, readInProcessOrCLI(app: app) ?? 0)
+    }
+
+    /// Forgets the apps that weren't read in this poll, so a process ID that's reused later never
+    /// gets a quit app's badge.
+    func forgetApps(except readPIDs: Set<pid_t>) {
+        if cachedASNs.keys.contains(where: { !readPIDs.contains($0) }) {
+            cachedASNs = cachedASNs.filter { readPIDs.contains($0.key) }
+        }
+        if cachedCLIASNs.keys.contains(where: { !readPIDs.contains($0) }) {
+            cachedCLIASNs = cachedCLIASNs.filter { readPIDs.contains($0.key) }
+        }
     }
 
     // MARK: - Dock AXStatusLabel
 
     private func bundleID(for url: URL) -> String {
-        if let cached = bundleIDs[url] { return cached }
+        if let cached = urlBundleIDs[url] { return cached }
         let bundleID = Bundle(url: url)?.bundleIdentifier ?? ""
-        bundleIDs[url] = bundleID
+        urlBundleIDs[url] = bundleID
         return bundleID
     }
 
@@ -76,7 +132,11 @@ final class AppBadgeReader {
 
     private func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
         var value: CFTypeRef?
-        return AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success ? value : nil
+        let result = AXUIElementCopyAttributeValue(element, name as CFString, &value)
+        if result == .cannotComplete {
+            dockUnresponsiveUntil = Date().addingTimeInterval(Self.dockBackoff)
+        }
+        return result == .success ? value : nil
     }
 
     // MARK: - Label Parsing

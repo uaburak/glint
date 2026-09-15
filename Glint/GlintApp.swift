@@ -14,12 +14,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        terminateOtherInstances()
         NSApp.mainMenu = makeMainMenu()
         Pref.migrateLegacySettings()
+        Pref.removeObsoleteSettings()
 
         let controller = AlarmController()
         self.controller = controller
         StatusMenuManager.shared.setup(controller: controller)
+        GlobalShortcuts.shared.handler = { [weak controller] action in controller?.perform(action) }
+        GlobalShortcuts.shared.reload()
 
         let defaults = UserDefaults.standard
         if !defaults.bool(forKey: Pref.hasLaunched) {
@@ -31,6 +35,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if let controller { SettingsWindowManager.shared.show(controller: controller) }
         return false
+    }
+
+    /// Puts the Mac's volume back if the alarm is ringing.
+    func applicationWillTerminate(_ notification: Notification) {
+        AlarmSoundPlayer.shared.stop()
+    }
+
+    /// With two copies running (say, a new build next to the installed app) every notification would
+    /// show twice; the one launched last takes over.
+    private func terminateOtherInstances() {
+        guard let bundleID = Bundle.main.bundleIdentifier else { return }
+        for other in NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+        where other.processIdentifier != getpid() {
+            if !other.terminate() {
+                other.forceTerminate()
+            }
+        }
     }
 
     /// Menu bar apps never show their main menu, but its shortcuts (⌘W, ⌘Q, copy/paste)

@@ -25,10 +25,6 @@ enum Presence {
         guard let session = CGSessionCopyCurrentDictionary() as? [String: Any] else { return false }
         return (session["CGSSessionScreenIsLocked"] as? Bool) ?? false
     }
-
-    static func isAway(idleThreshold: TimeInterval, lockCountsAsAway: Bool) -> Bool {
-        (lockCountsAsAway && isScreenLocked()) || idleSeconds() >= idleThreshold
-    }
 }
 
 /// Keeps the Mac from idle-sleeping while monitoring is on (the display may still sleep).

@@ -59,7 +59,10 @@ final class NotificationBannerOverlay {
         BannerPanel.Handlers(
             tap: { [weak self] stack in self?.cardTapped(stack) },
             open: { [weak self] stack in self?.open(stack) },
-            close: { [weak self] id in self?.remove(stackID: id) },
+            openItem: { [weak self] stack, itemID in self?.openItem(stack: stack, itemID: itemID) },
+            closeStack: { [weak self] id in self?.remove(stackID: id) },
+            closeItem: { [weak self] stackID, itemID in self?.removeItem(stackID: stackID, itemID: itemID) },
+            collapse: { [weak self] id in self?.collapse(stackID: id) },
             hover: { [weak self] hovering in self?.hoverChanged(hovering) }
         )
     }
@@ -75,7 +78,7 @@ final class NotificationBannerOverlay {
     }
 
     /// Shows a notification: on top of its app's stack if that app's banner is up, as a new stack otherwise.
-    func show(app: WatchedApp, title: String, body: String, position: BannerPosition) {
+    func show(app: WatchedApp, title: String, body: String, position: BannerPosition, date: Date = Date()) {
         if position != self.position {
             self.position = position
             arrangePanels()
@@ -89,7 +92,7 @@ final class NotificationBannerOverlay {
                 model.showsAll = false
             }
             model.push(
-                BannerStackModel.Item(title: title, body: body),
+                BannerStackModel.Item(title: title, body: body, date: date),
                 from: app,
                 expiresAt: now.addingTimeInterval(lifetime),
                 popsUntil: now.addingTimeInterval(Self.popDuration)
@@ -106,11 +109,21 @@ final class NotificationBannerOverlay {
         remove(stackID: appID)
     }
 
+    /// Opens the app of the newest notification and removes its stack; false when none is waiting.
+    func openNewest() -> Bool {
+        guard let stack = model.stacks.first else { return false }
+        open(stack)
+        return true
+    }
+
     /// Follows the settings: where banners pop up and whether they're on. With a notch the island sits
     /// on it whenever banners are on, even before any notification.
     func configure(position: BannerPosition, enabled: Bool) {
         let hasNotch = Notch.current != nil
         guard position != self.position || enabled != bannersEnabled || hasNotch != notchAvailable else { return }
+        if !enabled, bannersEnabled {
+            dismiss(animated: false)
+        }
         self.position = position
         bannersEnabled = enabled
         notchAvailable = hasNotch
@@ -198,12 +211,42 @@ final class NotificationBannerOverlay {
         remove(stackID: stack.id)
     }
 
+    private func openItem(stack: BannerStackModel.Stack, itemID: UUID) {
+        stack.app.openApplication()
+        removeItem(stackID: stack.id, itemID: itemID)
+    }
+
     private func remove(stackID: String) {
         withAnimation(.easeOut(duration: 0.25)) {
             model.stacks.removeAll { $0.id == stackID }
         }
         syncNotch()
         afterChange()
+    }
+
+    private func removeItem(stackID: String, itemID: UUID) {
+        guard let stackIndex = model.stacks.firstIndex(where: { $0.id == stackID }) else { return }
+        withAnimation(.easeOut(duration: 0.25)) {
+            model.stacks[stackIndex].items.removeAll { $0.id == itemID }
+            if model.stacks[stackIndex].items.isEmpty {
+                model.stacks.remove(at: stackIndex)
+            } else if model.stacks[stackIndex].items.count <= 1 {
+                model.stacks[stackIndex].expanded = false
+            }
+        }
+        popPanel.scheduleFrameUpdate()
+        listPanel.scheduleFrameUpdate()
+        syncNotch()
+        afterChange()
+    }
+
+    private func collapse(stackID: String) {
+        guard let index = model.stacks.firstIndex(where: { $0.id == stackID }) else { return }
+        withAnimation(.spring(response: 0.38, dampingFraction: 0.88)) {
+            model.stacks[index].expanded = false
+        }
+        popPanel.scheduleFrameUpdate()
+        listPanel.scheduleFrameUpdate()
     }
 
     private func hoverChanged(_ hovering: Bool) {
@@ -344,7 +387,10 @@ private final class BannerPanel {
     struct Handlers {
         let tap: (BannerStackModel.Stack) -> Void
         let open: (BannerStackModel.Stack) -> Void
-        let close: (String) -> Void
+        let openItem: (BannerStackModel.Stack, UUID) -> Void
+        let closeStack: (String) -> Void
+        let closeItem: (String, UUID) -> Void
+        let collapse: (String) -> Void
         let hover: (Bool) -> Void
     }
 
@@ -392,7 +438,10 @@ private final class BannerPanel {
                 shelf: shelf,
                 onTap: handlers.tap,
                 onOpen: handlers.open,
-                onClose: handlers.close,
+                onOpenItem: handlers.openItem,
+                onCloseStack: handlers.closeStack,
+                onCloseItem: handlers.closeItem,
+                onCollapse: handlers.collapse,
                 onHover: handlers.hover
             ))
             panel.contentView = hosting
@@ -421,7 +470,12 @@ private final class BannerPanel {
     /// The size is right once SwiftUI has laid out the change.
     func scheduleFrameUpdate() {
         DispatchQueue.main.async { [weak self] in
-            MainActor.assumeIsolated { self?.updateFrame() }
+            MainActor.assumeIsolated {
+                self?.updateFrame()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    self?.updateFrame()
+                }
+            }
         }
     }
 
@@ -487,9 +541,17 @@ final class BannerStackModel {
     }
 
     struct Item: Identifiable, Equatable {
-        let id = UUID()
+        let id: UUID
         let title: String
         let body: String
+        let date: Date
+
+        init(id: UUID = UUID(), title: String, body: String, date: Date = Date()) {
+            self.id = id
+            self.title = title
+            self.body = body
+            self.date = date
+        }
     }
 
     struct Stack: Identifiable {
@@ -499,6 +561,9 @@ final class BannerStackModel {
         var expiresAt: Date
         /// Until when the stack's banner is up after a new notification.
         var popsUntil: Date?
+        /// Notifications that came in for the stack, including the ones past `maxPerStack`; the notch
+        /// island's badge.
+        var received = 1
 
         var id: String { app.id }
     }
@@ -519,6 +584,7 @@ final class BannerStackModel {
     func push(_ item: Item, from app: WatchedApp, expiresAt: Date, popsUntil: Date?, maxStacks: Int = 4, maxPerStack: Int = 10) {
         if let index = stacks.firstIndex(where: { $0.id == app.id }) {
             var stack = stacks.remove(at: index)
+            stack.received += 1
             stack.items.insert(item, at: 0)
             stack.items = Array(stack.items.prefix(maxPerStack))
             stack.expiresAt = expiresAt
@@ -546,7 +612,10 @@ struct BannerStackView: View {
     let shelf: BannerStackModel.Shelf
     let onTap: (BannerStackModel.Stack) -> Void
     let onOpen: (BannerStackModel.Stack) -> Void
-    let onClose: (String) -> Void
+    let onOpenItem: (BannerStackModel.Stack, UUID) -> Void
+    let onCloseStack: (String) -> Void
+    let onCloseItem: (String, UUID) -> Void
+    let onCollapse: (String) -> Void
     let onHover: (Bool) -> Void
 
     var body: some View {
@@ -560,7 +629,10 @@ struct BannerStackView: View {
                     underNotch: position == .notch,
                     onTap: { onTap(stack) },
                     onOpen: { onOpen(stack) },
-                    onClose: { onClose(stack.id) }
+                    onOpenItem: { itemID in onOpenItem(stack, itemID) },
+                    onCloseStack: { onCloseStack(stack.id) },
+                    onCloseItem: { itemID in onCloseItem(stack.id, itemID) },
+                    onCollapse: { onCollapse(stack.id) }
                 )
                 .transition(stackTransition)
             }
@@ -594,30 +666,88 @@ private struct BannerStackCards: View {
     let underNotch: Bool
     let onTap: () -> Void
     let onOpen: () -> Void
-    let onClose: () -> Void
+    let onOpenItem: (UUID) -> Void
+    let onCloseStack: () -> Void
+    let onCloseItem: (UUID) -> Void
+    let onCollapse: () -> Void
 
     /// How far each card behind the top one shows past it.
     private static let peek: CGFloat = 7
 
     var body: some View {
         if stack.expanded {
-            VStack(spacing: 8) {
-                ForEach(stack.items) { item in
-                    BannerCardView(app: stack.app, title: item.title, message: item.body, onTap: onTap, onOpen: onOpen, onClose: onClose)
+            VStack(alignment: .leading, spacing: 8) {
+                // Header row matching macOS expanded notification stack. It sits on whatever is behind
+                // the panel (white text vanished over a light window), so each part has its own glass.
+                HStack(alignment: .center) {
+                    Text(stack.app.name)
+                        .font(.system(size: 15, weight: .bold))
+                        .lineLimit(1)
+                        .padding(.horizontal, 11)
+                        .padding(.vertical, 3)
+                        .bannerGlass(in: Capsule())
+
+                    Spacer()
+
+                    Button(action: onCollapse) {
+                        Text("Daha az göster")
+                            .font(.system(size: 12, weight: .medium))
+                            .padding(.horizontal, 11)
+                            .padding(.vertical, 4)
+                            .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .bannerGlass(in: Capsule())
+
+                    Button(action: onCloseStack) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 9, weight: .bold))
+                            .frame(width: 22, height: 22)
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .bannerGlass(in: Circle())
+                    .help("Tümünü Kapat")
+                }
+                .padding(.horizontal, 4)
+
+                VStack(spacing: 8) {
+                    ForEach(stack.items) { item in
+                        BannerCardView(
+                            app: stack.app,
+                            title: item.title,
+                            message: item.body,
+                            date: item.date,
+                            isExpandedMode: true,
+                            onTap: { onOpenItem(item.id) },
+                            onOpen: { onOpenItem(item.id) },
+                            onClose: { onCloseItem(item.id) }
+                        )
                         .transition(underNotch ? .fromNotch : .opacity)
+                    }
                 }
             }
-        } else {
+            .frame(width: NotificationBannerOverlay.cardWidth)
+        } else if let newest = stack.items.first {
             let layers = min(stack.items.count - 1, 2)
-            let newest = stack.items[0]
             ZStack {
-                BannerCardView(app: stack.app, title: newest.title, message: newest.body, onTap: onTap, onOpen: onOpen, onClose: onClose)
-                    .id(newest.id)
-                    // A new notification lands on the stack the way a new stack arrives.
-                    .transition(.asymmetric(
-                        insertion: underNotch ? .fromNotch : .scale(scale: 0.9).combined(with: .opacity),
-                        removal: .opacity
-                    ))
+                BannerCardView(
+                    app: stack.app,
+                    title: newest.title,
+                    message: newest.body,
+                    date: newest.date,
+                    isExpandedMode: false,
+                    onTap: onTap,
+                    onOpen: onOpen,
+                    onClose: onCloseStack
+                )
+                .id(newest.id)
+                // A new notification lands on the stack the way a new stack arrives.
+                .transition(.asymmetric(
+                    insertion: underNotch ? .fromNotch : .scale(scale: 0.9).combined(with: .opacity),
+                    removal: .opacity
+                ))
             }
             .background {
                 ForEach(0..<layers, id: \.self) { layer in
@@ -639,11 +769,13 @@ private struct BannerStackCards: View {
 }
 
 struct BannerCardView: View {
-    static let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
+    static let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
 
     let app: WatchedApp
     let title: String
     let message: String
+    let date: Date?
+    let isExpandedMode: Bool
     let onTap: () -> Void
     let onOpen: () -> Void
     let onClose: () -> Void
@@ -654,6 +786,8 @@ struct BannerCardView: View {
         app: WatchedApp,
         title: String,
         message: String,
+        date: Date? = nil,
+        isExpandedMode: Bool = false,
         hovered: Bool = false,
         onTap: @escaping () -> Void,
         onOpen: @escaping () -> Void,
@@ -662,6 +796,8 @@ struct BannerCardView: View {
         self.app = app
         self.title = title
         self.message = message
+        self.date = date
+        self.isExpandedMode = isExpandedMode
         self.onTap = onTap
         self.onOpen = onOpen
         self.onClose = onClose
@@ -669,17 +805,31 @@ struct BannerCardView: View {
     }
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(alignment: .center, spacing: 10) {
             icon
 
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title)
-                    .font(.system(size: 13, weight: .semibold))
-                    .lineLimit(1)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(title)
+                        .font(.system(size: 13, weight: .semibold))
+                        .lineLimit(1)
+                        .foregroundStyle(.primary)
+
+                    if isExpandedMode, let timeString = relativeTimeString {
+                        Spacer(minLength: 6)
+                        Text(timeString)
+                            .font(.system(size: 11, weight: .regular))
+                            .foregroundStyle(.secondary.opacity(0.85))
+                            .lineLimit(1)
+                            .opacity(hovered ? 0 : 1)
+                    }
+                }
+
                 if !message.isEmpty {
                     Text(message)
                         .font(.system(size: 13))
                         .lineLimit(2)
+                        .foregroundStyle(.secondary)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -712,6 +862,23 @@ struct BannerCardView: View {
         }
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) { hovered = hovering }
+        }
+    }
+
+    private var relativeTimeString: String? {
+        guard let date else { return nil }
+        let seconds = -date.timeIntervalSinceNow
+        if seconds < 60 {
+            return "şimdi"
+        } else if seconds < 3600 {
+            let minutes = max(1, Int(seconds / 60))
+            return "\(minutes) dk. önce"
+        } else if seconds < 86400 {
+            let hours = Int(seconds / 3600)
+            return "\(hours) sa. önce"
+        } else {
+            let days = Int(seconds / 86400)
+            return "\(days) gün önce"
         }
     }
 

@@ -197,6 +197,9 @@ struct AppDetailPage: View {
             Section("Bildirim") {
                 Toggle("Glint bildirimi", isOn: binding(\.enabled))
                 Toggle("Uzaktayken alarm çal", isOn: binding(\.alarmEnabled))
+                Toggle("Alarmı yalnızca önemli bildirimlerde çal", isOn: binding(\.alarmOnlyImportant))
+                    .disabled(!config.alarmEnabled)
+                    .help("Önemli kelimeler Odak ve Öncelik sayfasından seçilir.")
                 LabeledContent("macOS bildirimleri") {
                     Button("Bildirim Ayarlarını Aç…") { app.openNotificationSettings() }
                 }

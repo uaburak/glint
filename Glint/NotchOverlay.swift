@@ -259,10 +259,9 @@ struct NotchIslandView: View {
                 shape.fill(.black)
 
                 // Pinned to the shape's edges: while shrunk they sit behind the notch's hardware, and
-                // as the island grows they slide out of it.
+                // as the island grows they slide out of it. The gap beside each is the gap below it.
                 HStack(spacing: 0) {
                     leadingIcon(newest)
-                        .frame(width: 20, height: 20)
                         .scaleEffect(grown ? 1 : 0.4)
                         .opacity(grown ? 1 : 0)
                     Spacer(minLength: 0)
@@ -270,8 +269,7 @@ struct NotchIslandView: View {
                         .scaleEffect(grown ? 1 : 0.4)
                         .opacity(grown ? 1 : 0)
                 }
-                .padding(.leading, NotchOverlay.earRadius + 10)
-                .padding(.trailing, NotchOverlay.earRadius + 9)
+                .padding(.horizontal, NotchOverlay.earRadius + itemInset)
             }
             .frame(width: grown ? grownWidth : grownWidth - 2 * NotchOverlay.expansion, height: notchSize.height)
             .clipShape(shape)
@@ -282,13 +280,21 @@ struct NotchIslandView: View {
         .animation(Self.resize, value: grown)
     }
 
+    /// The icon and the button are this big, each in a square.
+    private static let itemSize: CGFloat = 20
+
+    /// The gap between the icon (or button) and the island's bottom edge, used beside them too.
+    private var itemInset: CGFloat {
+        max(0, (notchSize.height - Self.itemSize) / 2)
+    }
+
     private func leadingIcon(_ newest: BannerStackModel.Stack?) -> some View {
         ZStack {
             if let newest {
                 appIcon(newest.app)
                     .transition(.opacity)
             } else {
-                GlintIcon(size: 20)
+                GlintIcon(size: Self.itemSize)
                     .transition(.opacity)
             }
         }
@@ -300,21 +306,49 @@ struct NotchIslandView: View {
             CubicKeyframe(1.22, duration: 0.14)
             SpringKeyframe(1.0, duration: 0.32, spring: .smooth)
         }
+        .frame(width: Self.itemSize, height: Self.itemSize)
+        // How many notifications came in, on the icon's corner like a Dock badge; its top stays a point
+        // inside the island.
+        .overlay(alignment: .topTrailing) {
+            if let newest {
+                CountBadge(count: newest.received)
+                    .offset(x: 6, y: -max(0, itemInset - 1))
+                    .transition(.scale.combined(with: .opacity))
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: newest == nil)
     }
 
+    /// A bare symbol, square like the icon, so the gaps around it match the icon's.
     private func trailingButton(empty: Bool) -> some View {
         Button(action: empty ? onOpenSettings : onClearAll) {
             Image(systemName: empty ? "gearshape.fill" : "xmark")
-                .font(.system(size: empty ? 11 : 10, weight: .bold))
+                .font(.system(size: 13, weight: .bold))
                 .contentTransition(.symbolEffect(.replace))
                 .foregroundStyle(.white.opacity(0.85))
-                .frame(width: 22, height: 22)
-                .background(Color.white.opacity(0.16), in: Circle())
-                .contentShape(Circle())
+                .frame(width: Self.itemSize, height: Self.itemSize)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help(empty ? "Glint Ayarları" : "Tüm bildirimleri temizle")
         .animation(.easeInOut(duration: 0.2), value: empty)
+    }
+
+    /// The number of notifications that came in, in a Dock badge's red.
+    private struct CountBadge: View {
+        let count: Int
+
+        var body: some View {
+            Text(count > 99 ? "99+" : "\(count)")
+                .font(.system(size: 9, weight: .bold))
+                .monospacedDigit()
+                .foregroundStyle(.white)
+                .contentTransition(.numericText(value: Double(count)))
+                .animation(.snappy, value: count)
+                .padding(.horizontal, 3.5)
+                .frame(minWidth: 13, minHeight: 13)
+                .background(Color.red, in: Capsule())
+        }
     }
 
     @ViewBuilder

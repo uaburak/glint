@@ -2,7 +2,7 @@ import SwiftUI
 
 /// The pages of the settings window, in sidebar order.
 enum SettingsPage: String, CaseIterable, Identifiable {
-    case about, apps, notifications, alarm, appearance, detection, general
+    case about, apps, notifications, alarm, quiet, appearance, detection, general
 
     var id: String { rawValue }
 
@@ -12,6 +12,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .apps: "Uygulamalar"
         case .notifications: "Bildirim Ayarları"
         case .alarm: "Alarm Ayarları"
+        case .quiet: "Odak ve Öncelik"
         case .appearance: "Görünüm Ayarları"
         case .detection: "Algılama"
         case .general: "Genel Ayarlar"
@@ -24,6 +25,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .apps: "square.grid.2x2"
         case .notifications: "bell.badge"
         case .alarm: "alarm"
+        case .quiet: "moon"
         case .appearance: "paintpalette"
         case .detection: "person.crop.circle.badge.clock"
         case .general: "gearshape"
@@ -80,7 +82,7 @@ struct SettingsView: View {
                     row(.apps)
                 }
                 Section {
-                    ForEach([SettingsPage.notifications, .alarm, .appearance, .detection]) { row($0) }
+                    ForEach([SettingsPage.notifications, .alarm, .quiet, .appearance, .detection]) { row($0) }
                 }
                 Section {
                     row(.general)
@@ -140,6 +142,7 @@ struct SettingsView: View {
         case .apps: AppsPage(controller: controller) { show(.app(id: $0.id)) }
         case .notifications: NotificationPage(controller: controller)
         case .alarm: AlarmPage(controller: controller)
+        case .quiet: QuietPage(controller: controller)
         case .appearance: AppearancePage(controller: controller)
         case .detection: DetectionPage(controller: controller)
         case .general: GeneralPage(controller: controller)
@@ -158,16 +161,22 @@ struct SettingsView: View {
         )
     }
 
-    /// Glint's own row at the top, like the Apple Account row in System Settings.
+    /// Glint's own row at the top, like the Apple Account row in System Settings. It points out
+    /// problems listed on the page.
     private var aboutRow: some View {
         HStack(spacing: 10) {
             GlintIcon(size: 30)
             VStack(alignment: .leading, spacing: 0) {
                 Text("Glint")
                     .font(.headline)
-                Text("Hakkında")
+                Text(controller.healthIssues.isEmpty ? "Hakkında" : "Dikkat gerekiyor")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+            if !controller.healthIssues.isEmpty {
+                Spacer()
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
             }
         }
         .padding(.vertical, 3)

@@ -20,8 +20,8 @@ final class NotificationDatabaseReader: @unchecked Sendable {
     /// Tells SQLite to copy bound strings: the Swift strings behind them don't outlive the call.
     private static let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
-    /// Callback fired whenever the SQLite WAL file detects new incoming writes from `usernoted`.
-    var onDatabaseChange: (@Sendable () -> Void)?
+    /// Called on the main queue whenever `usernoted` writes to the database's write-ahead log.
+    var onDatabaseChange: (() -> Void)?
 
     private var walSource: DispatchSourceFileSystemObject?
     private var lastFDACheckDate = Date.distantPast
@@ -74,11 +74,17 @@ final class NotificationDatabaseReader: @unchecked Sendable {
 
         let source = DispatchSource.makeFileSystemObjectSource(
             fileDescriptor: fd,
-            eventMask: [.write, .extend, .attrib, .link],
-            queue: DispatchQueue.global(qos: .userInitiated)
+            eventMask: [.write, .extend, .attrib, .link, .delete, .rename],
+            queue: .main
         )
-        source.setEventHandler { [weak self] in
-            self?.onDatabaseChange?()
+        source.setEventHandler { [weak self, weak source] in
+            guard let self, let source else { return }
+            // SQLite removes the log once no connection is left and usernoted then starts a new file,
+            // so the old one never changes again. `hasFullDiskAccess` watches the new one.
+            if !source.data.isDisjoint(with: [.delete, .rename]) {
+                self.stopWatchingWAL()
+            }
+            self.onDatabaseChange?()
         }
         source.setCancelHandler {
             close(fd)
@@ -194,10 +200,12 @@ final class NotificationDatabaseReader: @unchecked Sendable {
 
     // MARK: - Read Notification Records (Title & Body)
 
-    /// The most recent notification records of the app with any of the given bundle IDs, newest
+    /// The most recent notification records of the apps with any of the given bundle IDs, newest
     /// delivery first. usernoted keeps an app's records only while its “Bildirim Merkezi” option is on.
-    func fetchRecentNotifications(for bundleIDs: [String], limit: Int = 10) -> [NotificationDetails] {
-        guard hasFullDiskAccess, !bundleIDs.isEmpty, let db = openDatabase() else { return [] }
+    /// nil when the records can't be read (no access, or a schema this doesn't know).
+    func fetchRecentNotifications(for bundleIDs: [String], limit: Int = 10) -> [NotificationDetails]? {
+        guard !bundleIDs.isEmpty else { return [] }
+        guard hasFullDiskAccess, let db = openDatabase() else { return nil }
         defer { sqlite3_close(db) }
 
         let sql = """
@@ -209,7 +217,7 @@ final class NotificationDatabaseReader: @unchecked Sendable {
             LIMIT \(limit);
         """
         var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
         defer { sqlite3_finalize(stmt) }
         Self.bind(bundleIDs, to: stmt)
 
@@ -217,9 +225,12 @@ final class NotificationDatabaseReader: @unchecked Sendable {
         while sqlite3_step(stmt) == SQLITE_ROW {
             let matchedBundleID = sqlite3_column_text(stmt, 0).map { String(cString: $0) } ?? ""
             let dateValue = sqlite3_column_double(stmt, 2)
-            // usernoted stores Mac absolute time (seconds since 2001); accept Unix time too.
+            // usernoted stores Mac absolute time (seconds since 2001); accept Unix time too. The
+            // reading nearer now is the right one: a fixed cutoff (1e9) would flip in 2032, dating
+            // every record to 2001 so none would ever count as new.
             let deliveredDate: Date? = dateValue > 0
-                ? (dateValue > 1_000_000_000 ? Date(timeIntervalSince1970: dateValue) : Date(timeIntervalSinceReferenceDate: dateValue))
+                ? [Date(timeIntervalSinceReferenceDate: dateValue), Date(timeIntervalSince1970: dateValue)]
+                    .min { abs($0.timeIntervalSinceNow) < abs($1.timeIntervalSinceNow) }
                 : nil
 
             var content: (title: String?, subtitle: String?, body: String?) = (nil, nil, nil)
@@ -241,14 +252,20 @@ final class NotificationDatabaseReader: @unchecked Sendable {
         return results
     }
 
-    /// Whether usernoted has an entry for the app at all, for diagnostics.
-    func hasAppEntry(for bundleIDs: [String]) -> Bool {
-        guard hasFullDiskAccess, !bundleIDs.isEmpty, let db = openDatabase() else { return false }
+    /// Whether usernoted keeps any notification record for the app, which it does only while the app's
+    /// “Bildirim Merkezi” option is on. True when that can't be told, so no app is suspected for nothing.
+    func hasRecords(for bundleIDs: [String]) -> Bool {
+        guard hasFullDiskAccess, !bundleIDs.isEmpty, let db = openDatabase() else { return true }
         defer { sqlite3_close(db) }
 
-        let sql = "SELECT 1 FROM app WHERE \(appTableIdentifierCol) COLLATE NOCASE IN (\(Self.placeholders(bundleIDs.count))) LIMIT 1;"
+        let sql = """
+            SELECT 1 FROM record r
+            JOIN app a ON r.app_id = a.app_id
+            WHERE a.\(appTableIdentifierCol) COLLATE NOCASE IN (\(Self.placeholders(bundleIDs.count)))
+            LIMIT 1;
+        """
         var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return true }
         defer { sqlite3_finalize(stmt) }
         Self.bind(bundleIDs, to: stmt)
         return sqlite3_step(stmt) == SQLITE_ROW

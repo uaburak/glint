@@ -103,12 +103,17 @@ final class GlowOverlay {
 /// Layered, blurred strokes along the screen border. Only the inner half of each blur is
 /// on screen, which is what makes it read as light glowing inward from the edges.
 struct EdgeGlowView: View {
+    /// The shimmer stops after this long: a glow that stays until the messages are read then holds
+    /// still, instead of redrawing every screen 30 times a second for as long as it's up.
+    private static let shimmerDuration: TimeInterval = 8
+
     let color: Color
     let intensity: Double
     @State private var start = Date()
+    @State private var shimmering = true
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1 / 30)) { timeline in
+        TimelineView(.animation(minimumInterval: 1 / 30, paused: !shimmering)) { timeline in
             let t = timeline.date.timeIntervalSince(start)
             let light = color.mix(with: .white, by: 0.4)
             let gradient = AngularGradient(
@@ -127,6 +132,10 @@ struct EdgeGlowView: View {
         }
         .ignoresSafeArea()
         .allowsHitTesting(false)
+        .task {
+            try? await Task.sleep(for: .seconds(Self.shimmerDuration))
+            if !Task.isCancelled { shimmering = false }
+        }
     }
 
     private func edge(_ gradient: AngularGradient, width: CGFloat, blur: CGFloat) -> some View {
@@ -158,11 +167,9 @@ extension NSColor {
     /// one, like a catalog color, would crash).
     var hexString: String? {
         guard let rgb = usingColorSpace(.sRGB) else { return nil }
-        return String(
-            format: "#%02X%02X%02X",
-            Int((rgb.redComponent * 255).rounded()),
-            Int((rgb.greenComponent * 255).rounded()),
-            Int((rgb.blueComponent * 255).rounded())
-        )
+        // Wide-gamut colors (Display P3, from the color picker) can fall outside 0…1, which printed
+        // as a garbled hex string that then read back as the fallback purple.
+        func byte(_ component: CGFloat) -> Int { Int((min(max(component, 0), 1) * 255).rounded()) }
+        return String(format: "#%02X%02X%02X", byte(rgb.redComponent), byte(rgb.greenComponent), byte(rgb.blueComponent))
     }
 }
