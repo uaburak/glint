@@ -53,6 +53,8 @@ enum Pref {
         notifyBannerPosition: BannerPosition.topRight.rawValue,
         notifySound: "builtin.ding",
         notifyVolume: 0.6,
+        // On: the badge reports a message at once — the island and the glow — and the banner follows
+        // with the sender and the text once macOS has written the record.
         badgeFallback: true,
         quietDuringFocus: true,
         quietHoursEnabled: false,
@@ -177,7 +179,7 @@ struct AppSettings {
     var notifyBannerPosition: BannerPosition
     var notifySoundID: String
     var notifyVolume: Double
-    /// Notify from a badge that rose without a notification record (Full Disk Access mode).
+    /// Notify as soon as a badge rises, without waiting for the notification's record to be written.
     var badgeFallback: Bool
     var quietDuringFocus: Bool
     /// nil = no quiet hours.

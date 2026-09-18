@@ -14,7 +14,8 @@ Glint yalnızca mesajlaşma uygulamalarıyla sınırlı değildir: Dock simgesin
 | Parça | Yöntem |
 |---|---|
 | Okunmamış sayısı | **Sistem SQLite Veritabanı:** Tam Disk Erişimi (FDA) verildiğinde doğrudan macOS'un `group.com.apple.usernoted/db2/db` veritabanı olay tabanlı (WAL izleme ile sıfır gecikmeli) okunur. **Dock / LaunchServices Fallback:** İzin verilmediğinde veya ek teyit olarak LaunchServices ve Erişilebilirlik üzerinden Dock taranır. |
-| Yeni bildirim | Sistem veritabanına yeni kayıt düştüğünde; izin yoksa ya da veritabanı okunamıyorsa rozetteki sayı arttığında. Rozet artıp 5 saniye içinde kayıt gelmezse rozetten bildirilir. Uygulama yeni açıldıysa ilk 20 saniyedeki artışlar eski bildirimlerin yüklenmesi sayılır ve bildirilmez. |
+| Yeni bildirim | İki aşamalı: Dock simgesindeki sayı artar artmaz çentikteki ada büyür ve ekran kenarı ışıldar; mesajın kimden geldiği ve içeriği okunabildiğinde yüzen bildirim çıkar. macOS bildirim kaydını mesaj akışı durduktan ~5 sn sonra yazdığı için (arka arkaya mesajlarda 20 sn'yi bulabilir) ilk haber rozetten verilir. Uygulama yeni açıldıysa ilk 20 saniyedeki artışlar eski bildirimlerin yüklenmesi sayılır ve bildirilmez. |
+| Bildirilmeyenler | Uygulamayı o an kullanırken gelen mesajlar ve ekranda açık olan sohbetten gelenler. Açık sohbet, uygulamanın pencere başlığındaki kişi adından anlaşılır (Erişilebilirlik izni gerekir). |
 | "Uzakta mıyım?" | Klavye/fare hareketsizlik süresi (varsayılan 2 dk) veya kilitli ekran. Uzaktayken çalan alarmdan sonra klavyeye ya da fareye dokunana kadar uzakta sayılırsın. |
 | Sessiz mod | macOS Odak durumu (`~/Library/DoNotDisturb/DB/Assertions.json`, Tam Disk Erişimi gerekir) veya ayarlanan sessiz saatler. |
 
@@ -47,7 +48,7 @@ Ayarlar penceresi System Settings gibidir: sayfalar solda kenar çubuğunda, say
   - Bildirimi ve alarmı test et; sonradan eklenen uygulamalar listeden kaldırılabilir
 
 **Bildirim Ayarları**
-- Glint bildirimlerini aç/kapat; bildirim kaydı gelmezse simgedeki sayıdan bildir
+- Glint bildirimlerini aç/kapat; istenirse içerik beklenmeden simgedeki sayı artar artmaz bildir
 - Yüzen bildirim (banner) ve konumu (köşeler, orta ya da çentik)
 - Varsayılan bildirim sesi ve seviyesi (kendi sesi seçilmemiş uygulamalar için)
 

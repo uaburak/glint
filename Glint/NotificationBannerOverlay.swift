@@ -55,6 +55,19 @@ final class NotificationBannerOverlay {
     /// Opens Glint's settings, from the island's settings button.
     var onOpenSettings: (() -> Void)?
 
+    private init() {
+        // Banners on screen while a display is plugged in or unplugged: macOS moves their windows,
+        // so they're fitted to their corner (or to the notch) again. The island looks after itself.
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.popPanel.scheduleFrameUpdate()
+                self?.listPanel.scheduleFrameUpdate()
+            }
+        }
+    }
+
     private var handlers: BannerPanel.Handlers {
         BannerPanel.Handlers(
             tap: { [weak self] stack in self?.cardTapped(stack) },
@@ -77,14 +90,21 @@ final class NotificationBannerOverlay {
         Notch.current != nil && popPosition != .notch
     }
 
-    /// Shows a notification: on top of its app's stack if that app's banner is up, as a new stack otherwise.
-    func show(app: WatchedApp, title: String, body: String, position: BannerPosition, date: Date = Date()) {
+    /// Shows a notification: on top of its app's stack if that app's banner is up, as a new stack
+    /// otherwise. Returns the banner's id, so what it says can be filled in later.
+    ///
+    /// With `popping` off it's the first half of a notification whose message macOS hasn't written
+    /// yet: nothing pops up, it goes into the notch and the island grows for a moment to announce it.
+    /// `fillIn` then brings the banner out with the message.
+    @discardableResult
+    func show(app: WatchedApp, title: String, body: String, position: BannerPosition, date: Date = Date(), popping: Bool = true) -> UUID {
         if position != self.position {
             self.position = position
             arrangePanels()
         }
 
         let now = Date()
+        let item = BannerStackModel.Item(title: title, body: body, date: date)
         // With a notch, notifications nobody opened wait in it; without one they go with their banner.
         let lifetime = Notch.current != nil ? Self.waitingLifetime : Self.popDuration
         withAnimation(Self.arrival) {
@@ -92,15 +112,46 @@ final class NotificationBannerOverlay {
                 model.showsAll = false
             }
             model.push(
-                BannerStackModel.Item(title: title, body: body, date: date),
+                item,
                 from: app,
                 expiresAt: now.addingTimeInterval(lifetime),
-                popsUntil: now.addingTimeInterval(Self.popDuration)
+                popsUntil: popping ? now.addingTimeInterval(Self.popDuration) : nil
             )
         }
         startTimer()
         syncNotch()
+        if !popping {
+            // Nothing pops up, so the island announces it by itself: long enough to be noticed, short
+            // enough not to sit open while the message is still being written.
+            notch.holdOpenBriefly(4)
+        }
         presentPanels()
+        return item.id
+    }
+
+    /// Fills in a banner that went up from a badge, once the notification's own record turns up with
+    /// the sender and the message. Nothing happens if the banner is gone by then.
+    func fillIn(appID: String, itemID: UUID, title: String, body: String) {
+        guard let stackIndex = model.stacks.firstIndex(where: { $0.id == appID }),
+              let itemIndex = model.stacks[stackIndex].items.firstIndex(where: { $0.id == itemID })
+        else { return }
+        let existing = model.stacks[stackIndex].items[itemIndex]
+        let now = Date()
+        withAnimation(.easeOut(duration: 0.2)) {
+            model.stacks[stackIndex].items[itemIndex] = BannerStackModel.Item(
+                id: existing.id, title: title, body: body, date: existing.date
+            )
+            // The message is what the user was waiting to see, and macOS can be slow to write it:
+            // the banner gets its full time on screen again, even if the count-only one had gone.
+            model.stacks[stackIndex].popsUntil = now.addingTimeInterval(Self.popDuration)
+            let lifetime = Notch.current != nil ? Self.waitingLifetime : Self.popDuration
+            model.stacks[stackIndex].expiresAt = max(model.stacks[stackIndex].expiresAt, now.addingTimeInterval(lifetime))
+        }
+        startTimer()
+        syncNotch()
+        presentPanels()
+        popPanel.scheduleFrameUpdate()
+        listPanel.scheduleFrameUpdate()
     }
 
     /// Removes an app's notifications, e.g. once they've been read in the app.
@@ -400,6 +451,9 @@ private final class BannerPanel {
     private var hosting: NSHostingView<BannerStackView>?
     private var position: BannerPosition = .topRight
     private var shelf: BannerStackModel.Shelf = .popping
+    /// The banners' full height as SwiftUI lays them out. The panel is at most as tall as the screen
+    /// allows; beyond that the banners scroll inside it.
+    private var contentHeight: CGFloat = 0
 
     init(model: BannerStackModel, handlers: Handlers) {
         self.model = model
@@ -421,6 +475,7 @@ private final class BannerPanel {
         self.position = position
         self.shelf = shelf
         hosting = nil
+        contentHeight = 0
         panel?.orderOut(nil)
     }
 
@@ -442,8 +497,12 @@ private final class BannerPanel {
                 onCloseStack: handlers.closeStack,
                 onCloseItem: handlers.closeItem,
                 onCollapse: handlers.collapse,
-                onHover: handlers.hover
+                onHover: handlers.hover,
+                onContentHeight: { [weak self] height in self?.contentHeightChanged(height) }
             ))
+            // `updateFrame` sizes the panel; SwiftUI's own idea of its size (a scroller's width, say)
+            // would otherwise resize the window.
+            hosting.sizingOptions = []
             panel.contentView = hosting
             self.hosting = hosting
         }
@@ -479,30 +538,45 @@ private final class BannerPanel {
         }
     }
 
-    /// Fits the panel to its banners, pinned to its corner or edge, or just below the notch.
+    /// Taller banners get their room right away, or a new one would be cut off. Shorter ones wait for
+    /// `scheduleFrameUpdate` or `hideIfEmpty`, so banners that are leaving can finish animating.
+    private func contentHeightChanged(_ height: CGFloat) {
+        let grew = height > contentHeight
+        contentHeight = height
+        guard grew else { return }
+        // Not in the middle of SwiftUI's layout pass that reported it.
+        DispatchQueue.main.async { [weak self] in
+            MainActor.assumeIsolated { self?.updateFrame() }
+        }
+    }
+
+    /// Fits the panel to its banners, pinned to its corner or edge, or just below the notch. It never
+    /// reaches past the menu bar or the Dock; taller banners scroll.
     private func updateFrame() {
-        guard let panel, let hosting, !shown.isEmpty else { return }
-        let size = hosting.fittingSize
+        guard let panel, hosting != nil, !shown.isEmpty, contentHeight > 0 else { return }
         typealias Overlay = NotificationBannerOverlay
+        let width = Overlay.cardWidth + 2 * Overlay.margin
+        // The margins are transparent, so they may reach past the insets.
+        let inset = Overlay.screenInset - Overlay.margin
 
         if position == .notch, let notch = Notch.current {
-            // The top margin is transparent, so the first card starts `notchGap` below the notch.
-            let y = notch.frame.minY - Overlay.notchGap + Overlay.margin - size.height
-            panel.setFrame(NSRect(x: notch.frame.midX - size.width / 2, y: y, width: size.width, height: size.height), display: true)
+            // The first card starts `notchGap` below the notch.
+            let top = notch.frame.minY - Overlay.notchGap + Overlay.margin
+            let height = min(contentHeight, top - (notch.screen.visibleFrame.minY + inset))
+            panel.setFrame(NSRect(x: notch.frame.midX - width / 2, y: top - height, width: width, height: height), display: true)
             return
         }
 
         guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
         let visible = screen.visibleFrame
-        // The margin is transparent, so it may reach past the inset.
-        let inset = Overlay.screenInset - Overlay.margin
+        let height = min(contentHeight, visible.height - 2 * inset)
         let x: CGFloat = switch position {
         case .topLeft, .bottomLeft: visible.minX + inset
-        case .topCenter, .bottomCenter, .notch: visible.midX - size.width / 2
-        case .topRight, .bottomRight: visible.maxX - size.width - inset
+        case .topCenter, .bottomCenter, .notch: visible.midX - width / 2
+        case .topRight, .bottomRight: visible.maxX - width - inset
         }
-        let y: CGFloat = position.isTop ? visible.maxY - size.height - inset : visible.minY + inset
-        panel.setFrame(NSRect(x: x, y: y, width: size.width, height: size.height), display: true)
+        let y: CGFloat = position.isTop ? visible.maxY - height - inset : visible.minY + inset
+        panel.setFrame(NSRect(x: x, y: y, width: width, height: height), display: true)
     }
 
     private static func makePanel() -> NSPanel {
@@ -561,8 +635,7 @@ final class BannerStackModel {
         var expiresAt: Date
         /// Until when the stack's banner is up after a new notification.
         var popsUntil: Date?
-        /// Notifications that came in for the stack, including the ones past `maxPerStack`; the notch
-        /// island's badge.
+        /// Notifications that came in for the stack; the notch island's badge.
         var received = 1
 
         var id: String { app.id }
@@ -581,12 +654,12 @@ final class BannerStackModel {
         }
     }
 
-    func push(_ item: Item, from app: WatchedApp, expiresAt: Date, popsUntil: Date?, maxStacks: Int = 4, maxPerStack: Int = 10) {
+    func push(_ item: Item, from app: WatchedApp, expiresAt: Date, popsUntil: Date?, maxStacks: Int = 4) {
         if let index = stacks.firstIndex(where: { $0.id == app.id }) {
             var stack = stacks.remove(at: index)
             stack.received += 1
+            // The newest on top and the rest slide down; a stack isn't capped, the panel scrolls.
             stack.items.insert(item, at: 0)
-            stack.items = Array(stack.items.prefix(maxPerStack))
             stack.expiresAt = expiresAt
             stack.popsUntil = popsUntil
             stacks.insert(stack, at: 0)
@@ -617,30 +690,45 @@ struct BannerStackView: View {
     let onCloseItem: (String, UUID) -> Void
     let onCollapse: (String) -> Void
     let onHover: (Bool) -> Void
+    /// The banners' full height, which the panel fits as far as the screen allows.
+    let onContentHeight: (CGFloat) -> Void
 
     var body: some View {
         // The newest stack sits nearest the screen edge (or the notch).
         let shown = model.shown(on: shelf)
         let stacks = position.isTop ? shown : Array(shown.reversed())
-        VStack(spacing: 10) {
-            ForEach(stacks) { stack in
-                BannerStackCards(
-                    stack: stack,
-                    underNotch: position == .notch,
-                    onTap: { onTap(stack) },
-                    onOpen: { onOpen(stack) },
-                    onOpenItem: { itemID in onOpenItem(stack, itemID) },
-                    onCloseStack: { onCloseStack(stack.id) },
-                    onCloseItem: { itemID in onCloseItem(stack.id, itemID) },
-                    onCollapse: { onCollapse(stack.id) }
-                )
-                .transition(stackTransition)
+        let edge: UnitPoint = position.isTop ? .top : .bottom
+        // Banners that don't fit on the screen scroll; the margins are inside, so the close buttons
+        // overhanging the cards aren't cut off.
+        ScrollView(.vertical) {
+            VStack(spacing: 10) {
+                ForEach(stacks) { stack in
+                    BannerStackCards(
+                        stack: stack,
+                        underNotch: position == .notch,
+                        onTap: { onTap(stack) },
+                        onOpen: { onOpen(stack) },
+                        onOpenItem: { itemID in onOpenItem(stack, itemID) },
+                        onCloseStack: { onCloseStack(stack.id) },
+                        onCloseItem: { itemID in onCloseItem(stack.id, itemID) },
+                        onCollapse: { onCollapse(stack.id) }
+                    )
+                    .transition(stackTransition)
+                }
             }
+            .padding(NotificationBannerOverlay.margin)
+            .frame(width: NotificationBannerOverlay.cardWidth + 2 * NotificationBannerOverlay.margin)
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { onContentHeight($0) }
         }
-        .padding(NotificationBannerOverlay.margin)
-        .frame(width: NotificationBannerOverlay.cardWidth + 2 * NotificationBannerOverlay.margin)
-        // While the panel waits to shrink, keep the banners against the screen edge.
-        .frame(maxHeight: .infinity, alignment: position.isTop ? .top : .bottom)
+        // With “always show” scroll bars a scroller would sit in the transparent panel and take room
+        // from the cards; scrolling still works without it.
+        .scrollIndicators(.never)
+        .scrollBounceBehavior(.basedOnSize)
+        // Against the screen edge (or the notch): while the panel waits to shrink, when it opens, and
+        // as banners come and go, so the newest stays in sight.
+        .defaultScrollAnchor(edge, for: .alignment)
+        .defaultScrollAnchor(edge, for: .initialOffset)
+        .defaultScrollAnchor(edge, for: .sizeChanges)
         .onHover(perform: onHover)
     }
 
@@ -938,14 +1026,13 @@ private struct BannerCapsuleButtonStyle: ButtonStyle {
 }
 
 private extension View {
-    /// Liquid Glass on macOS 26 and later; the closest system material before that.
+    /// Liquid Glass on macOS 26 and later, nothing over it; the closest system material before that.
     @ViewBuilder
     func bannerGlass(in shape: some Shape) -> some View {
         if #available(macOS 26.0, *) {
-            glassEffect(.regular, in: shape)
+            glassEffect(in: shape)
         } else {
             background(.regularMaterial, in: shape)
-                .shadow(color: .black.opacity(0.2), radius: 10, y: 3)
         }
     }
 }

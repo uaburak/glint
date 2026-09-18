@@ -16,9 +16,18 @@ struct Notch {
                   let right = screen.auxiliaryTopRightArea,
                   right.minX > left.maxX else { continue }
             let height = screen.safeAreaInsets.top
+            // The auxiliary areas are in the screen's own coordinate space, which is the global one
+            // only for a display at the origin: with another display to its left or above, the
+            // built-in screen's frame starts elsewhere and their x would be off by that much. Widths
+            // are the same in both spaces, so the notch is placed by the room the left area leaves.
             return Notch(
                 screen: screen,
-                frame: NSRect(x: left.maxX, y: screen.frame.maxY - height, width: right.minX - left.maxX, height: height)
+                frame: NSRect(
+                    x: screen.frame.minX + left.width,
+                    y: screen.frame.maxY - height,
+                    width: right.minX - left.maxX,
+                    height: height
+                )
             )
         }
         return nil
@@ -52,6 +61,11 @@ final class NotchOverlay {
     /// the list's linger and the island's own animation, it's back to the notch in about 2 s.
     private static let releaseDelay: TimeInterval = 1.2
     private static let pointerCheckInterval: TimeInterval = 1.0 / 30
+    /// How many pointer checks apart the island's place is verified: a display change macOS didn't
+    /// announce, or announced before it had finished moving windows, is corrected within half a second.
+    private static let placeCheckEvery = 15
+    /// When the displays change, windows keep being moved for a moment after the notification.
+    private static let screenSettleDelays: [TimeInterval] = [0.3, 1.2]
 
     var onHoverChanged: ((Bool) -> Void)?
     var onClearAll: (() -> Void)?
@@ -64,7 +78,8 @@ final class NotchOverlay {
     var holdsOpen = false {
         didSet {
             if oldValue, !holdsOpen {
-                heldUntil = Date().addingTimeInterval(Self.releaseDelay)
+                // Never shorter than a hold already running (`holdOpenBriefly`).
+                heldUntil = max(heldUntil, Date().addingTimeInterval(Self.releaseDelay))
                 scheduleRelease()
             }
             updateExpansion()
@@ -75,37 +90,61 @@ final class NotchOverlay {
     private let island = IslandState()
     private var panel: NSPanel?
     private var notch: Notch?
+    /// Whether the island has been asked for. Kept apart from `showing`: without a notch there's
+    /// nothing to show, and the island has to come back by itself once the notched display does.
+    private var wanted = false
     private var showing = false
     private var hovered = false
     private var heldUntil = Date.distantPast
     private var releaseTimer: Timer?
     private var pointerTimer: Timer?
+    private var pointerChecks = 0
     private var hideWork: DispatchWorkItem?
+    /// The offset the island's view was built with, so it's only rebuilt when it really moved.
+    private var appliedCenterOffset: CGFloat?
 
     init(model: BannerStackModel) {
         self.model = model
+        // A display coming or going moves windows about, so the island is put back on the notch.
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.screensChanged() }
+        }
     }
 
     /// Puts the island on the notch, or takes it away.
     func refresh(showing: Bool) {
-        guard showing, let notch = Notch.current else {
-            self.showing = false
+        wanted = showing
+        place()
+    }
+
+    /// Puts the island where the notch is now. Safe to call again at any time: it only touches the
+    /// window when something has actually moved.
+    private func place() {
+        guard wanted, let notch = Notch.current else {
+            showing = false
             updateExpansion()
             hide()
             return
         }
-        self.showing = true
+        showing = true
         hideWork?.cancel()
         hideWork = nil
 
         let panel = self.panel ?? makePanel()
         self.panel = panel
-        if self.notch?.frame != notch.frame {
-            self.notch = notch
-            // Room for the grown island and the blur on each side of it.
-            panel.setFrame(Self.shapeFrame(for: notch, grown: true).insetBy(dx: -Self.feather, dy: 0), display: false)
-            // Window frames snap to whole points; shift the island so it stays centred on the notch.
-            let centerOffset = notch.frame.midX - panel.frame.midX
+        // Room for the grown island and the blur on each side of it. Re-applied even when the notch
+        // itself hasn't moved: macOS shifts windows when the displays change, and the island stayed
+        // where it was pushed — in the middle of the screen after an external display went away.
+        let frame = Self.shapeFrame(for: notch, grown: true).insetBy(dx: -Self.feather, dy: 0)
+        if panel.frame != frame {
+            panel.setFrame(frame, display: false)
+        }
+        // Window frames snap to whole points; shift the island so it stays centred on the notch.
+        let centerOffset = notch.frame.midX - panel.frame.midX
+        if self.notch?.frame.size != notch.frame.size || centerOffset != appliedCenterOffset {
+            appliedCenterOffset = centerOffset
             panel.contentView = FirstMouseHostingView(rootView: NotchIslandView(
                 model: model,
                 island: island,
@@ -115,10 +154,22 @@ final class NotchOverlay {
                 onOpenSettings: { [weak self] in self?.onOpenSettings?() }
             ))
         }
+        self.notch = notch
         if !panel.isVisible {
             panel.orderFrontRegardless()
         }
         startTrackingPointer()
+    }
+
+    /// The screens settle over a moment: windows are still being moved after the notification, and a
+    /// display that comes back brings the island with it.
+    private func screensChanged() {
+        place()
+        for delay in Self.screenSettleDelays {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                MainActor.assumeIsolated { self?.place() }
+            }
+        }
     }
 
     // MARK: - Pointer
@@ -141,6 +192,10 @@ final class NotchOverlay {
     /// Hovered while the pointer is over the island's current shape; everywhere else the window lets
     /// the mouse through to whatever is below.
     private func checkPointer() {
+        pointerChecks += 1
+        if pointerChecks % Self.placeCheckEvery == 0 {
+            place()
+        }
         guard let panel, let notch, showing else { return }
         // A point of slack at the top: the pointer can rest on the screen's very edge.
         let shape = Self.shapeFrame(for: notch, grown: island.expanded).insetBy(dx: 0, dy: -1)
@@ -159,6 +214,20 @@ final class NotchOverlay {
 
     /// Re-checks the island once the release delay is over. A timer with a tight tolerance: a delayed
     /// dispatch can be coalesced up to a second late while Glint is in the background.
+    /// Grows the island for a moment on its own: a notification the badge reported, whose message is
+    /// still on its way, so there's no banner to hold it open yet.
+    func holdOpenBriefly(_ seconds: TimeInterval) {
+        heldUntil = max(heldUntil, Date().addingTimeInterval(seconds))
+        releaseTimer?.invalidate()
+        let timer = Timer(timeInterval: seconds + 0.05, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.updateExpansion() }
+        }
+        timer.tolerance = 0.05
+        RunLoop.main.add(timer, forMode: .common)
+        releaseTimer = timer
+        updateExpansion()
+    }
+
     private func scheduleRelease() {
         releaseTimer?.invalidate()
         let timer = Timer(timeInterval: Self.releaseDelay + 0.02, repeats: false) { [weak self] _ in

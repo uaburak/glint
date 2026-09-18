@@ -22,8 +22,8 @@ struct NotificationPage: View {
             Section {
                 Toggle("Yeni bildirimlerde Glint bildirimi göster", isOn: $enabled)
                 Hint("Uygulamalar sayfasındaki bir uygulamaya bildirim geldiğinde ekran kenarında o uygulamanın renginde ışıma ve bildirim sesi verilir. Tam Disk Erişimi varsa Glint bildirimleri doğrudan macOS'un Bildirim Merkezi kaydından okur; yoksa Dock simgesindeki sayının artmasından anlar. Her uygulama kendi sayfasından ayrıca kapatılabilir.")
-                Toggle("Bildirim kaydı gelmezse simgedeki sayıdan bildir", isOn: $badgeFallback)
-                Hint("Tam Disk Erişimi varken bir uygulamanın simgesindeki sayı artıp 5 saniye içinde bildirim kaydı gelmezse (ör. uygulamanın “Bildirim Merkezi” ayarı kapalıysa) Glint yine de okunmamış sayısıyla bildirir. Sessize alınmış sohbetler de sayıyı artırıyorsa fazladan bildirim görebilirsin.")
+                Toggle("Mesaj geldiği anda haber ver, içerik gelince göster", isOn: $badgeFallback)
+                Hint("Açıkken iki aşamalı olur: simgedeki sayı artar artmaz çentikteki ada büyür ve ekran kenarı ışıldar, mesajın kimden geldiği ve içeriği geldiğinde de yüzen bildirim çıkar. macOS bu içeriği yazmak için mesaj akışının durmasını bekler, arka arkaya gelen mesajlarda bu 20 saniyeyi bulabilir; bu yüzden ilk haber rozetten verilir. Kapatırsan hiçbir şey gösterilmez, yalnızca içerik geldiğinde tek bir bildirim çıkar.")
             }
 
             Section("Yüzen Bildirim (Banner)") {
