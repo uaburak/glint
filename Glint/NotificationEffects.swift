@@ -1,9 +1,8 @@
 import AppKit
 import SwiftUI
 
-/// The frame effect: a sharp line tracing the screen's own outline — around the rounded corners and
-/// around the notch — in the app's colour. It arrives from beyond the screen's edge, settles onto the
-/// outline, and leaves the same way.
+/// The frame effect: a sharp line tracing the screen's own outline — around its rounded corners and
+/// around Glint's island in the notch — in the app's colour. It appears and goes without animating.
 ///
 /// It draws in a click-through window on each screen, so nothing gets in the user's way. The glow has
 /// its own overlay (`GlowOverlay`).
@@ -11,8 +10,8 @@ import SwiftUI
 final class EffectOverlay {
     /// How long the frame stays when it isn't set to wait for the notifications to be read.
     private static let defaultDuration: TimeInterval = 2.5
-    /// Long enough for it to leave before its window goes.
-    private static let exitTime: TimeInterval = 0.45
+    /// It doesn't animate away, so its window goes with it.
+    private static let exitTime: TimeInterval = 0
 
     private var windows: [NSWindow] = []
     private var hideWork: DispatchWorkItem?
@@ -32,8 +31,7 @@ final class EffectOverlay {
             let view = ScreenFrameView(
                 color: Color(hex: colorHex),
                 intensity: intensity,
-                notch: Self.notchRect(on: screen),
-                onScreenTime: onScreenTime
+                notch: Self.notchRect(on: screen)
             )
             window.contentView = NSHostingView(rootView: view)
             window.orderFrontRegardless()
@@ -59,7 +57,7 @@ final class EffectOverlay {
         windows.removeAll()
     }
 
-    /// The notch's place in the window's own coordinates (top-left origin), on the screen that has one.
+    /// The notch in the window's own coordinates (top-left origin), on the screen that has one.
     private static func notchRect(on screen: NSScreen) -> CGRect? {
         guard let notch = Notch.current, notch.screen == screen else { return nil }
         return CGRect(
@@ -90,36 +88,30 @@ final class EffectOverlay {
 private struct ScreenFrameView: View {
     let color: Color
     let intensity: Double
-    /// Where the notch sits along the top edge, when this screen has one.
+    /// The notch along the top edge, when this screen has one.
     let notch: CGRect?
-    let onScreenTime: TimeInterval
 
-    /// The line's width, and how far outside the screen it starts and ends.
     private static let lineWidth: CGFloat = 5
-    private static let travel: CGFloat = 26
-    private static let arrival: TimeInterval = 0.32
-    private static let departure: TimeInterval = 0.4
+    /// The island's own growing animation, so the line stays on its edge while it moves.
+    private static let follow = Animation.smooth(duration: 0.38)
 
-    /// 0 while it is still outside the screen, 1 once it sits on the outline.
-    @State private var arrived = false
+    private var island = IslandState.shared
 
     var body: some View {
-        GeometryReader { geometry in
-            ScreenOutline(notch: notch, cornerRadius: Self.cornerRadius)
-                .stroke(color.opacity(0.95 * intensity), lineWidth: Self.lineWidth)
-                .shadow(color: color.opacity(0.55 * intensity), radius: 10)
-                // Out beyond the screen's edge to begin with, so it comes in from the outside and,
-                // when its time is up, leaves the same way rather than shrinking inwards.
-                .padding(arrived ? Self.lineWidth / 2 : -Self.travel)
-                .opacity(arrived ? 1 : 0)
-                .frame(width: geometry.size.width, height: geometry.size.height)
-                .onAppear {
-                    withAnimation(.easeOut(duration: Self.arrival)) { arrived = true }
-                    guard onScreenTime.isFinite else { return }
-                    withAnimation(.easeIn(duration: Self.departure).delay(onScreenTime)) { arrived = false }
-                }
-        }
-        .ignoresSafeArea()
+        // The screen's edges are inset by half the line, so none of it falls off; the island keeps
+        // its own place, which is where the user sees it.
+        ScreenOutline(island: islandRect, cornerRadius: Self.cornerRadius, inset: Self.lineWidth / 2)
+            .stroke(color.opacity(0.95 * intensity), lineWidth: Self.lineWidth)
+            .shadow(color: color.opacity(0.55 * intensity), radius: 10)
+            .animation(Self.follow, value: island.expanded)
+            .ignoresSafeArea()
+    }
+
+    /// Glint's island as it stands right now: the notch, its ears, and the room it takes when grown.
+    private var islandRect: CGRect? {
+        guard let notch else { return nil }
+        let extra = NotchOverlay.earRadius + (island.expanded ? NotchOverlay.expansion : 0)
+        return notch.insetBy(dx: -extra, dy: 0)
     }
 
     /// The rounded corners of a modern Mac display. Apple doesn't hand the radius out, and being a
@@ -129,37 +121,41 @@ private struct ScreenFrameView: View {
     }
 }
 
-/// The outline of the screen itself: rounded corners, and a bite taken out around the notch.
+/// The outline of the screen itself: rounded corners, and Glint's island hanging into the top edge.
 private struct ScreenOutline: Shape {
-    let notch: CGRect?
+    let island: CGRect?
     let cornerRadius: CGFloat
+    /// How far inside the screen's edge the line runs.
+    let inset: CGFloat
 
-    func path(in rect: CGRect) -> Path {
+    func path(in bounds: CGRect) -> Path {
+        let rect = bounds.insetBy(dx: inset, dy: inset)
         var path = Path()
         let radius = min(cornerRadius, min(rect.width, rect.height) / 2)
 
-        guard let notch, notch.width > 0, notch.height > 0 else {
+        guard let island, island.width > 0, island.height > 0 else {
             path.addRoundedRect(in: rect, cornerSize: CGSize(width: radius, height: radius))
             return path
         }
 
-        // The notch's own corners, rounded the way the hardware is.
-        let notchRadius = min(6, notch.height / 2)
-        let left = max(rect.minX + radius, notch.minX)
-        let right = min(rect.maxX - radius, notch.maxX)
-        let bottom = notch.maxY
+        // The island's own shape: ears curving out of the top edge and a rounded bottom, as
+        // `NotchShape` draws it.
+        let ear = NotchOverlay.earRadius
+        let bottom = NotchOverlay.bottomRadius
+        let left = island.minX
+        let right = island.maxX
+        let base = island.maxY
 
         path.move(to: CGPoint(x: rect.minX, y: rect.minY + radius))
         path.addQuadCurve(to: CGPoint(x: rect.minX + radius, y: rect.minY), control: CGPoint(x: rect.minX, y: rect.minY))
-        // Along the top to the notch, around it, and on to the far corner.
-        path.addLine(to: CGPoint(x: left - notchRadius, y: rect.minY))
-        path.addQuadCurve(to: CGPoint(x: left, y: rect.minY + notchRadius), control: CGPoint(x: left, y: rect.minY))
-        path.addLine(to: CGPoint(x: left, y: bottom - notchRadius))
-        path.addQuadCurve(to: CGPoint(x: left + notchRadius, y: bottom), control: CGPoint(x: left, y: bottom))
-        path.addLine(to: CGPoint(x: right - notchRadius, y: bottom))
-        path.addQuadCurve(to: CGPoint(x: right, y: bottom - notchRadius), control: CGPoint(x: right, y: bottom))
-        path.addLine(to: CGPoint(x: right, y: rect.minY + notchRadius))
-        path.addQuadCurve(to: CGPoint(x: right + notchRadius, y: rect.minY), control: CGPoint(x: right, y: rect.minY))
+        path.addLine(to: CGPoint(x: left, y: rect.minY))
+        path.addQuadCurve(to: CGPoint(x: left + ear, y: rect.minY + ear), control: CGPoint(x: left + ear, y: rect.minY))
+        path.addLine(to: CGPoint(x: left + ear, y: base - bottom))
+        path.addQuadCurve(to: CGPoint(x: left + ear + bottom, y: base), control: CGPoint(x: left + ear, y: base))
+        path.addLine(to: CGPoint(x: right - ear - bottom, y: base))
+        path.addQuadCurve(to: CGPoint(x: right - ear, y: base - bottom), control: CGPoint(x: right - ear, y: base))
+        path.addLine(to: CGPoint(x: right - ear, y: rect.minY + ear))
+        path.addQuadCurve(to: CGPoint(x: right, y: rect.minY), control: CGPoint(x: right - ear, y: rect.minY))
         path.addLine(to: CGPoint(x: rect.maxX - radius, y: rect.minY))
         path.addQuadCurve(to: CGPoint(x: rect.maxX, y: rect.minY + radius), control: CGPoint(x: rect.maxX, y: rect.minY))
         // Down the right side, along the bottom, and back up the left.

@@ -87,7 +87,7 @@ final class NotchOverlay {
     }
 
     private let model: BannerStackModel
-    private let island = IslandState()
+    private let island = IslandState.shared
     private var panel: NSPanel?
     private var notch: Notch?
     /// Whether the island has been asked for. Kept apart from `showing`: without a notch there's
@@ -287,10 +287,13 @@ final class NotchOverlay {
     }
 }
 
-/// Whether the island is grown (with its icons) or sits on the notch at its size.
+/// Whether the island is grown (with its icons) or sits on the notch at its size. Shared, so the
+/// frame effect can trace the island's edge as it grows and shrinks.
 @MainActor
 @Observable
 final class IslandState {
+    static let shared = IslandState()
+
     var expanded = false
 }
 
