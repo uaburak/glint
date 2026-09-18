@@ -79,6 +79,8 @@ final class AlarmController {
     @ObservationIgnored private let dbReader = NotificationDatabaseReader.shared
     @ObservationIgnored private let overlay = AlarmOverlay()
     @ObservationIgnored private let glow = GlowOverlay()
+    /// The other screen effects: the flash, the sweep, the ripple, the frame and the corner dot.
+    @ObservationIgnored private let effects = EffectOverlay()
     @ObservationIgnored private let bannerOverlay = NotificationBannerOverlay.shared
     @ObservationIgnored private var sleepGuard = SleepGuard()
     @ObservationIgnored private var timer: Timer?
@@ -344,6 +346,7 @@ final class AlarmController {
 
         if unread == 0 && previousTotal > 0 && !isPaused {
             glow.dismissIfPersistent()
+            effects.dismissIfPersistent()
             overlay.dismiss()
             log("Bildirimler okundu")
         }
@@ -727,6 +730,24 @@ final class AlarmController {
         }
     }
 
+    /// Puts the chosen effect on screen. The shake moves the window in front instead of drawing, and
+    /// falls back to the glow when there's nothing it may move (a full-screen app, the login window).
+    private func play(effect: NotifyEffect, colorHex: String, settings: AppSettings) {
+        switch effect {
+        case .none:
+            break
+        case .glow:
+            glow.show(colorHex: colorHex, intensity: settings.notifyGlowIntensity, duration: settings.notifyGlowDuration)
+        case .shake:
+            if !WindowShake.shakeFrontWindow(intensity: settings.notifyGlowIntensity) {
+                Self.log.notice("shake: no window to move; glowing instead")
+                glow.show(colorHex: colorHex, intensity: settings.notifyGlowIntensity, duration: settings.notifyGlowDuration)
+            }
+        default:
+            effects.show(effect, colorHex: colorHex, intensity: settings.notifyGlowIntensity, duration: settings.notifyGlowDuration)
+        }
+    }
+
     private func fireAlarm(unread: Int, appName: String, settings: AppSettings) {
         guard Date().timeIntervalSince(lastAlarmAt) > 5 else { return }
         lastAlarmAt = Date()
@@ -871,13 +892,7 @@ final class AlarmController {
 
     private func notify(colorHex: String, soundID: String, volume: Double, settings: AppSettings, withSound: Bool) {
         guard settings.notifyEnabled else { return }
-        if settings.notifyGlow {
-            glow.show(
-                colorHex: colorHex,
-                intensity: settings.notifyGlowIntensity,
-                duration: settings.notifyGlowDuration
-            )
-        }
+        play(effect: settings.notifyEffect, colorHex: colorHex, settings: settings)
         if withSound {
             AlarmSoundPlayer.notification.playOnce(soundID, volume: volume)
         }
