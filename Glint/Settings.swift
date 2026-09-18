@@ -178,8 +178,6 @@ enum NotifyStyle: String, CaseIterable, Identifiable {
 enum NotifyEffect: String, CaseIterable, Identifiable {
     /// Soft light along the screen's edges.
     case glow
-    /// A sharp line tracing the screen's outline, notch included.
-    case frame
     /// Nothing on screen.
     case none
 
@@ -188,7 +186,6 @@ enum NotifyEffect: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .glow: "Işıma"
-        case .frame: "Çerçeve"
         case .none: "Efekt yok"
         }
     }
@@ -196,7 +193,6 @@ enum NotifyEffect: String, CaseIterable, Identifiable {
     var detail: String {
         switch self {
         case .glow: "Ekran kenarlarında uygulamanın renginde yumuşak ışıma."
-        case .frame: "Ekranın en dış hattını çentiğin etrafından dolaşarak saran ince çizgi."
         case .none: "Ekranda hiçbir şey olmaz."
         }
     }
@@ -204,7 +200,6 @@ enum NotifyEffect: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .glow: "sparkles"
-        case .frame: "rectangle.portrait.inset.filled"
         case .none: "nosign"
         }
     }

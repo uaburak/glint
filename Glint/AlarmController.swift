@@ -79,8 +79,6 @@ final class AlarmController {
     @ObservationIgnored private let dbReader = NotificationDatabaseReader.shared
     @ObservationIgnored private let overlay = AlarmOverlay()
     @ObservationIgnored private let glow = GlowOverlay()
-    /// The other screen effects: the flash, the sweep, the ripple, the frame and the corner dot.
-    @ObservationIgnored private let effects = EffectOverlay()
     @ObservationIgnored private let bannerOverlay = NotificationBannerOverlay.shared
     @ObservationIgnored private var sleepGuard = SleepGuard()
     @ObservationIgnored private var timer: Timer?
@@ -346,7 +344,6 @@ final class AlarmController {
 
         if unread == 0 && previousTotal > 0 && !isPaused {
             glow.dismissIfPersistent()
-            effects.dismissIfPersistent()
             overlay.dismiss()
             log("Bildirimler okundu")
         }
@@ -737,8 +734,6 @@ final class AlarmController {
             break
         case .glow:
             glow.show(colorHex: colorHex, intensity: settings.notifyGlowIntensity, duration: settings.notifyGlowDuration)
-        case .frame:
-            effects.show(effect, colorHex: colorHex, intensity: settings.notifyGlowIntensity, duration: settings.notifyGlowDuration)
         }
     }
 

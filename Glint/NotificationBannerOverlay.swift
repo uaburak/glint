@@ -1026,13 +1026,14 @@ private struct BannerCapsuleButtonStyle: ButtonStyle {
 }
 
 private extension View {
-    /// Liquid Glass on macOS 26 and later, nothing over it; the closest system material before that.
+    /// Glass and nothing else: the clear Liquid Glass of macOS 26 and later, or the thinnest system
+    /// material before that.
     @ViewBuilder
     func bannerGlass(in shape: some Shape) -> some View {
         if #available(macOS 26.0, *) {
-            glassEffect(in: shape)
+            glassEffect(.clear, in: shape)
         } else {
-            background(.regularMaterial, in: shape)
+            background(.ultraThinMaterial, in: shape)
         }
     }
 }
