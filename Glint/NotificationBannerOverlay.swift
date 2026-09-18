@@ -773,7 +773,7 @@ private struct BannerStackCards: View {
                         .lineLimit(1)
                         .padding(.horizontal, 11)
                         .padding(.vertical, 3)
-                        .bannerGlass(in: Capsule())
+                        .glassEffect(in: Capsule())
 
                     Spacer()
 
@@ -785,7 +785,7 @@ private struct BannerStackCards: View {
                             .contentShape(Capsule())
                     }
                     .buttonStyle(.plain)
-                    .bannerGlass(in: Capsule())
+                    .glassEffect(in: Capsule())
 
                     Button(action: onCloseStack) {
                         Image(systemName: "xmark")
@@ -795,7 +795,7 @@ private struct BannerStackCards: View {
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
-                    .bannerGlass(in: Circle())
+                    .glassEffect(in: Circle())
                     .help("Tümünü Kapat")
                 }
                 .padding(.horizontal, 4)
@@ -841,7 +841,7 @@ private struct BannerStackCards: View {
                 ForEach(0..<layers, id: \.self) { layer in
                     let depth = CGFloat(layers - layer)
                     Color.clear
-                        .bannerGlass(in: BannerCardView.shape)
+                        .glassEffect(in: BannerCardView.shape)
                         // Only the part past the top card shows; the rest would darken its glass.
                         .mask(alignment: underNotch ? .top : .bottom) {
                             Rectangle().frame(height: 22 + Self.peek * depth)
@@ -932,7 +932,7 @@ struct BannerCardView: View {
         .frame(minHeight: 62)
         .contentShape(Self.shape)
         .onTapGesture(perform: onTap)
-        .bannerGlass(in: Self.shape)
+        .glassEffect(in: Self.shape)
         .overlay(alignment: .trailing) {
             if hovered {
                 Button("Aç", action: onOpen)
@@ -1008,7 +1008,7 @@ struct BannerCardView: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(.secondary)
-        .bannerGlass(in: Circle())
+        .glassEffect(in: Circle())
         .help("Kapat")
     }
 }
@@ -1022,18 +1022,5 @@ private struct BannerCapsuleButtonStyle: ButtonStyle {
             .padding(.vertical, 5)
             .background(Color.primary.opacity(configuration.isPressed ? 0.22 : 0.12), in: Capsule())
             .contentShape(Capsule())
-    }
-}
-
-private extension View {
-    /// Glass and nothing else: the clear Liquid Glass of macOS 26 and later, or the thinnest system
-    /// material before that.
-    @ViewBuilder
-    func bannerGlass(in shape: some Shape) -> some View {
-        if #available(macOS 26.0, *) {
-            glassEffect(.clear, in: shape)
-        } else {
-            background(.ultraThinMaterial, in: shape)
-        }
     }
 }
