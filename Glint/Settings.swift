@@ -19,7 +19,6 @@ enum Pref {
     static let notifyBannerPosition = "notifyBannerPosition"
     static let notifySound = "notifySound"
     static let notifyVolume = "notifyVolume"
-    static let badgeFallback = "badgeFallback"
     static let quietDuringFocus = "quietDuringFocus"
     static let quietHoursEnabled = "quietHoursEnabled"
     /// Minutes after midnight.
@@ -53,9 +52,6 @@ enum Pref {
         notifyBannerPosition: BannerPosition.topRight.rawValue,
         notifySound: "builtin.ding",
         notifyVolume: 0.6,
-        // On: the badge reports a message at once — the island and the glow — and the banner follows
-        // with the sender and the text once macOS has written the record.
-        badgeFallback: true,
         quietDuringFocus: true,
         quietHoursEnabled: false,
         quietHoursStart: 22.0 * 60,
@@ -75,6 +71,9 @@ enum Pref {
     /// Settings of TeamsAlarm features Glint doesn't have (phone pairing, proximity, calls), which the
     /// migration below carried over.
     private static let obsoleteKeys = [
+        // Glint used to announce a message from its badge and fill the text in later; now a
+        // notification waits until its text is there and everything comes at once.
+        "badgeFallback",
         "apnsKeyID", "apnsTeamID", "callDelayMinutes", "maxVolume", "notifyGlowColor", "pairingCode",
         "proximityDelay", "proximityDeviceID", "proximityDeviceName", "proximityEnabled",
         "proximityLostTimeout", "proximityRequireIdle", "proximityThreshold", "repeatCallMinutes",
@@ -180,7 +179,6 @@ struct AppSettings {
     var notifySoundID: String
     var notifyVolume: Double
     /// Notify as soon as a badge rises, without waiting for the notification's record to be written.
-    var badgeFallback: Bool
     var quietDuringFocus: Bool
     /// nil = no quiet hours.
     var quietHours: QuietHours?
@@ -208,7 +206,6 @@ struct AppSettings {
             notifyBannerPosition: BannerPosition(rawValue: d.string(forKey: Pref.notifyBannerPosition) ?? "") ?? .topRight,
             notifySoundID: d.string(forKey: Pref.notifySound) ?? "builtin.ding",
             notifyVolume: d.double(forKey: Pref.notifyVolume),
-            badgeFallback: d.bool(forKey: Pref.badgeFallback),
             quietDuringFocus: d.bool(forKey: Pref.quietDuringFocus),
             quietHours: d.bool(forKey: Pref.quietHoursEnabled)
                 ? QuietHours(start: Int(d.double(forKey: Pref.quietHoursStart)), end: Int(d.double(forKey: Pref.quietHoursEnd)))

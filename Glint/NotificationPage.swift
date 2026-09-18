@@ -11,7 +11,6 @@ struct NotificationPage: View {
     @AppStorage(Pref.notifyBannerPosition) private var bannerPosition = BannerPosition.topRight.rawValue
     @AppStorage(Pref.notifySound) private var sound = "builtin.ding"
     @AppStorage(Pref.notifyVolume) private var volume = 0.6
-    @AppStorage(Pref.badgeFallback) private var badgeFallback = true
 
     private var currentPosition: BannerPosition {
         BannerPosition(rawValue: bannerPosition) ?? .topRight
@@ -21,9 +20,7 @@ struct NotificationPage: View {
         Form {
             Section {
                 Toggle("Yeni bildirimlerde Glint bildirimi göster", isOn: $enabled)
-                Hint("Bildirim gelen uygulamanın renginde ekran kenarı ışıması ve ses. Her uygulama kendi sayfasından ayrıca kapatılabilir.")
-                Toggle("Mesaj geldiği anda haber ver, içerik gelince göster", isOn: $badgeFallback)
-                Hint("Açıkken bildirim anında çentik ve ışımayla duyurulur, metin gelince yüzen bildirime dolar. Kapalıyken yalnızca metin geldiğinde tek bildirim çıkar.")
+                Hint("Bildirim gelen uygulamanın renginde ekran kenarı ışıması, çentikte simgesi ve yüzen bildirim — hepsi birlikte. Her uygulama kendi sayfasından ayrıca kapatılabilir.")
             }
 
             Section("Yüzen Bildirim (Banner)") {

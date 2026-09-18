@@ -101,12 +101,16 @@ final class AlarmController {
     /// Delivery date of the newest record handled per watched app; later records are new notifications.
     /// Set when the app starts being watched, so records from before never count.
     @ObservationIgnored private var recordWatermark: [String: Date] = [:]
-    /// A message the badge counted, waiting for its record to say who it's from and what it says.
+    /// A notification a signal reported, waiting for its record to say who it's from and what it says.
     private struct PendingBanner {
-        /// The notch item the badge put up for it; nil for the other messages of the same rise.
+        /// The notch item put up for it, when it was announced before its text; nil otherwise.
         let itemID: UUID?
-        /// Whether the badge already announced it (glow, sound, island), so its record doesn't again.
+        /// Whether it was already announced (glow, sound, island), so its record doesn't announce again.
         let announced: Bool
+        /// Whether macOS's own log said it was shown — then a notification certainly went up, and one
+        /// whose record never comes is still worth reporting late. A badge can rise without any
+        /// notification at all (a muted chat, messages read elsewhere), so those are left alone.
+        let fromLog: Bool
         let at: Date
     }
 
@@ -279,9 +283,10 @@ final class AlarmController {
                     // A message in the conversation the user is reading is on their screen already, and
                     // its badge clears itself a moment later.
                     let inUse = ActiveConversation.isInUse(app)
-                    // Normally the badge announces a message the moment it comes and its record fills in
-                    // the text later; switched off, only the record reports it.
-                    let waitsForRecord = recordMode && !settings.badgeFallback
+                    // A badge only counts; the notification itself goes up once its record says who
+                    // wrote and what — glow, notch and banner together. Without records to wait for,
+                    // the badge is all there will ever be.
+                    let waitsForRecord = recordMode
                     // One rise can count several messages; each gets its own place in the queue.
                     let messages = max(count - previous, 1)
                     // Those the app's own database already reported are this rise, not something new.
@@ -294,8 +299,10 @@ final class AlarmController {
                     } else if waitsForRecord {
                         // Queued unannounced: the record reports it, and an app whose records never come
                         // is still reported as a problem. The system log's line for it is this same one.
-                        pendingBadgeBanners[app.id, default: []].append(PendingBanner(itemID: nil, announced: false, at: now))
-                        noteAnnouncement(appID: app.id, at: now, hasContent: false, badgeSeen: true)
+                        for _ in 0..<newMessages {
+                            pendingBadgeBanners[app.id, default: []].append(PendingBanner(itemID: nil, announced: false, fromLog: false, at: now))
+                            noteAnnouncement(appID: app.id, at: now, hasContent: false, badgeSeen: true)
+                        }
                     } else {
                         // In record mode this is the first half of the notification: the island and the
                         // glow say a message came, and the banner waits for the record to say what it
@@ -305,9 +312,9 @@ final class AlarmController {
                             popsBanner: !recordMode, settings: settings
                         )
                         if recordMode {
-                            pendingBadgeBanners[app.id, default: []].append(PendingBanner(itemID: itemID, announced: true, at: now))
+                            pendingBadgeBanners[app.id, default: []].append(PendingBanner(itemID: itemID, announced: true, fromLog: false, at: now))
                             for _ in 1..<newMessages {
-                                pendingBadgeBanners[app.id, default: []].append(PendingBanner(itemID: nil, announced: true, at: now))
+                                pendingBadgeBanners[app.id, default: []].append(PendingBanner(itemID: nil, announced: true, fromLog: false, at: now))
                             }
                         }
                         // The system log's lines for these are the same notifications, already announced.
@@ -480,6 +487,18 @@ final class AlarmController {
             if !hasRecords {
                 appsWithoutRecords.insert(appID)
             }
+            // macOS showed a notification and never wrote down what it said. Rather than losing it,
+            // it goes up late with the unread count. A badge that rose without a notification behind
+            // it (a muted chat, messages read on the phone) is left alone.
+            let missed = expired.filter { $0.fromLog && !$0.announced }
+            if !missed.isEmpty, !isPaused, !ActiveConversation.isInUse(app) {
+                Self.log.notice("\(appID, privacy: .public): notifying late from the count; its text never came")
+                handleNewNotification(
+                    for: app, config: WatchedAppStore.shared.config(for: app),
+                    count: max(appStatuses[appID]?.unread ?? 0, missed.count),
+                    settings: settings
+                )
+            }
         }
     }
 
@@ -561,22 +580,21 @@ final class AlarmController {
 
         let settings = AppSettings.load()
         let recordMode = hasFullDiskAccess && recordsFailingSince == nil
-        // With "tell me the moment it arrives" off, the record alone reports it, as with badges.
-        guard !recordMode || settings.badgeFallback else {
-            pendingBadgeBanners[app.id, default: []].append(PendingBanner(itemID: nil, announced: false, at: now))
-            noteAnnouncement(appID: app.id, at: now, hasContent: false, logSeen: true)
+        noteAnnouncement(appID: app.id, at: now, hasContent: false, logSeen: true)
+
+        // A notification is on its way: its record says what it is in a few seconds, and everything
+        // goes up then, at once. Only when records can't be read does this report it by itself.
+        guard !recordMode else {
+            Self.log.notice("\(app.id, privacy: .public): macOS delivered a notification; waiting for its text")
+            pendingBadgeBanners[app.id, default: []].append(PendingBanner(itemID: nil, announced: false, fromLog: true, at: now))
             return
         }
 
         Self.log.notice("\(app.id, privacy: .public): macOS says a notification was delivered (system log)")
-        let itemID = handleNewNotification(
+        handleNewNotification(
             for: app, config: config, count: max(appStatuses[app.id]?.unread ?? 0, 1),
-            popsBanner: !recordMode, settings: settings
+            settings: settings
         )
-        noteAnnouncement(appID: app.id, at: now, hasContent: false, logSeen: true)
-        if recordMode {
-            pendingBadgeBanners[app.id, default: []].append(PendingBanner(itemID: itemID, announced: true, at: now))
-        }
     }
 
     /// Marks up to `limit` of the app's announcements as accounted for by this signal, and says how
