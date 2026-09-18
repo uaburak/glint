@@ -730,20 +730,14 @@ final class AlarmController {
         }
     }
 
-    /// Puts the chosen effect on screen. The shake moves the window in front instead of drawing, and
-    /// falls back to the glow when there's nothing it may move (a full-screen app, the login window).
+    /// Puts the chosen effect on screen.
     private func play(effect: NotifyEffect, colorHex: String, settings: AppSettings) {
         switch effect {
         case .none:
             break
         case .glow:
             glow.show(colorHex: colorHex, intensity: settings.notifyGlowIntensity, duration: settings.notifyGlowDuration)
-        case .shake:
-            if !WindowShake.shakeFrontWindow(intensity: settings.notifyGlowIntensity) {
-                Self.log.notice("shake: no window to move; glowing instead")
-                glow.show(colorHex: colorHex, intensity: settings.notifyGlowIntensity, duration: settings.notifyGlowDuration)
-            }
-        default:
+        case .frame:
             effects.show(effect, colorHex: colorHex, intensity: settings.notifyGlowIntensity, duration: settings.notifyGlowDuration)
         }
     }

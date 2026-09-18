@@ -120,7 +120,7 @@ struct AppearancePage: View {
 
             if effect != .none {
                 Section("Efekt Ayarları") {
-                    LabeledContent(effect == .shake ? "Sarsıntı şiddeti" : "Efekt yoğunluğu") {
+                    LabeledContent("Efekt yoğunluğu") {
                         HStack(spacing: 8) {
                             Image(systemName: "sun.min").foregroundStyle(.secondary)
                             Slider(value: $intensity, in: 0.3...1)
@@ -189,11 +189,7 @@ struct AppearancePage: View {
     }
 
     private var hint: String {
-        switch effect {
-        case .shake: "Tam ekran uygulamalarda pencere oynatılamaz; orada ışıma gösterilir."
-        case .none: ""
-        default: "Efektin rengi her uygulamanın kendi sayfasından seçilir."
-        }
+        effect == .none ? "" : "Efektin rengi her uygulamanın kendi sayfasından seçilir."
     }
 
     private func select(_ position: BannerPosition) {

@@ -96,7 +96,13 @@ enum Pref {
     /// that carried both. What the screen does and where the message shows are two settings now, so
     /// whatever a user had is carried into the pair that matches it.
     static func migrateNotifyStyle(_ d: UserDefaults = .standard) {
-        guard d.string(forKey: notifyEffect) == nil else { return }
+        // Effects that have been taken out again fall back to the glow.
+        if let saved = d.string(forKey: notifyEffect) {
+            if NotifyEffect(rawValue: saved) == nil {
+                d.set(NotifyEffect.glow.rawValue, forKey: notifyEffect)
+            }
+            return
+        }
         let glowed: Bool
         let style: NotifyStyle
         switch d.string(forKey: notifyStyle) {
@@ -172,18 +178,8 @@ enum NotifyStyle: String, CaseIterable, Identifiable {
 enum NotifyEffect: String, CaseIterable, Identifiable {
     /// Soft light along the screen's edges.
     case glow
-    /// The window in front jolts a few pixels and settles back.
-    case shake
-    /// The whole screen takes the colour for an instant.
-    case flash
-    /// A band of colour sweeps across the screen once.
-    case sweep
-    /// A ring spreads out from the notch, like a drop in water.
-    case ripple
-    /// A thin, sharp border around the screen.
+    /// A sharp line tracing the screen's outline, notch included.
     case frame
-    /// A small dot pulses in the corner.
-    case dot
     /// Nothing on screen.
     case none
 
@@ -192,12 +188,7 @@ enum NotifyEffect: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .glow: "Işıma"
-        case .shake: "Sarsıntı"
-        case .flash: "Flaş"
-        case .sweep: "Perde"
-        case .ripple: "Dalga"
         case .frame: "Çerçeve"
-        case .dot: "Nokta"
         case .none: "Efekt yok"
         }
     }
@@ -205,12 +196,7 @@ enum NotifyEffect: String, CaseIterable, Identifiable {
     var detail: String {
         switch self {
         case .glow: "Ekran kenarlarında uygulamanın renginde yumuşak ışıma."
-        case .shake: "Öndeki pencere bir an sağa sola oynar ve yerine döner."
-        case .flash: "Ekran bir anlığına uygulamanın renginde parlar."
-        case .sweep: "Renkli bir bant ekranı bir kenardan diğerine süpürür."
-        case .ripple: "Çentikten dışa doğru genişleyen bir halka."
-        case .frame: "Ekranın kenarında ince, keskin bir renkli çerçeve."
-        case .dot: "Ekranın köşesinde nabız gibi atan küçük bir nokta."
+        case .frame: "Ekranın en dış hattını çentiğin etrafından dolaşarak saran ince çizgi."
         case .none: "Ekranda hiçbir şey olmaz."
         }
     }
@@ -218,20 +204,13 @@ enum NotifyEffect: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .glow: "sparkles"
-        case .shake: "waveform.path"
-        case .flash: "bolt.fill"
-        case .sweep: "arrow.left.and.right"
-        case .ripple: "dot.radiowaves.left.and.right"
         case .frame: "rectangle.portrait.inset.filled"
-        case .dot: "circle.fill"
         case .none: "nosign"
         }
     }
 
     /// Whether it can stay on screen until the notifications are read.
-    var canPersist: Bool { self == .glow || self == .frame || self == .dot }
-    /// Whether how strong it is can be chosen.
-    var hasIntensity: Bool { self != .none }
+    var canPersist: Bool { self != .none }
 }
 
 enum AlarmStyle: String, CaseIterable, Identifiable {
