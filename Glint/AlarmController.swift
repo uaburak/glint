@@ -227,7 +227,7 @@ final class AlarmController {
         teams.update(enabled: hasFullDiskAccess && teamsWatched && !isPaused)
         teams.check()
         deliveryLog.update(enabled: !isPaused && settings.notifyEnabled && !watched.isEmpty)
-        bannerOverlay.configure(position: settings.notifyBannerPosition, enabled: settings.notifyEnabled && settings.notifyBanner)
+        bannerOverlay.configure(position: settings.notifyBannerPosition, enabled: settings.notifyEnabled && settings.notifyStyle.showsNotch)
         updateQuiet(settings: settings)
 
         if hasFullDiskAccess {
@@ -657,8 +657,12 @@ final class AlarmController {
         guard title != nil || body != nil else { return }
         if let itemID {
             bannerOverlay.fillIn(appID: app.id, itemID: itemID, title: title ?? app.name, body: body ?? "")
-        } else if settings.notifyEnabled, settings.notifyBanner, WatchedAppStore.shared.config(for: app).enabled {
-            bannerOverlay.show(app: app, title: title ?? app.name, body: body ?? "", position: settings.notifyBannerPosition, date: delivered)
+        } else if settings.notifyEnabled, settings.notifyStyle.showsNotch, WatchedAppStore.shared.config(for: app).enabled {
+            bannerOverlay.show(
+                app: app, title: title ?? app.name, body: body ?? "",
+                position: settings.notifyBannerPosition, date: delivered,
+                popping: settings.notifyStyle.showsBanner
+            )
         }
     }
 
@@ -712,11 +716,14 @@ final class AlarmController {
             )
         }
 
-        guard settings.notifyBanner else { return nil }
+        // Every style but the glow-only one gives the notification its place in the notch; whether a
+        // card pops out of it as well is what the style decides.
+        guard settings.notifyStyle.showsNotch else { return nil }
+        let pops = popsBanner && settings.notifyStyle.showsBanner
         if title != nil || body != nil {
-            return bannerOverlay.show(app: app, title: title ?? app.name, body: body ?? "", position: settings.notifyBannerPosition, date: deliveredDate ?? Date(), popping: popsBanner)
+            return bannerOverlay.show(app: app, title: title ?? app.name, body: body ?? "", position: settings.notifyBannerPosition, date: deliveredDate ?? Date(), popping: pops)
         } else {
-            return bannerOverlay.show(app: app, title: app.name, body: "\(count) okunmamış bildirim", position: settings.notifyBannerPosition, date: deliveredDate ?? Date(), popping: popsBanner)
+            return bannerOverlay.show(app: app, title: app.name, body: "\(count) okunmamış bildirim", position: settings.notifyBannerPosition, date: deliveredDate ?? Date(), popping: pops)
         }
     }
 
@@ -848,8 +855,17 @@ final class AlarmController {
 
         notify(colorHex: colorHex, soundID: soundID, volume: volume, settings: settings, withSound: true)
 
-        if settings.notifyBanner {
-            testBanner(position: settings.notifyBannerPosition, for: app)
+        if settings.notifyStyle.showsNotch {
+            let testApp = app ?? WatchedApp.listed.first ?? WatchedApp.builtIn[0]
+            bannerOverlay.show(
+                app: testApp,
+                title: "\(testApp.name) Bildirimi",
+                body: settings.notifyStyle.showsBanner
+                    ? "Bu seçilen konumda (\(settings.notifyBannerPosition.title)) örnek bir bildirimdir."
+                    : "Çentikte bekleyen örnek bir bildirimdir.",
+                position: settings.notifyBannerPosition,
+                popping: settings.notifyStyle.showsBanner
+            )
         }
     }
 

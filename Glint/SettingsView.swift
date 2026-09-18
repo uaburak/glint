@@ -106,7 +106,7 @@ struct SettingsView: View {
                     row(.apps)
                 }
                 Section {
-                    ForEach([SettingsPage.notifications, .alarm, .quiet, .appearance, .detection]) { row($0) }
+                    ForEach([SettingsPage.notifications, .appearance, .alarm, .quiet, .detection]) { row($0) }
                 }
                 Section {
                     row(.general)

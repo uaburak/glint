@@ -7,14 +7,8 @@ import SwiftUI
 struct NotificationPage: View {
     let controller: AlarmController
     @AppStorage(Pref.notifyEnabled) private var enabled = true
-    @AppStorage(Pref.notifyBanner) private var bannerEnabled = true
-    @AppStorage(Pref.notifyBannerPosition) private var bannerPosition = BannerPosition.topRight.rawValue
     @AppStorage(Pref.notifySound) private var sound = "builtin.ding"
     @AppStorage(Pref.notifyVolume) private var volume = 0.6
-
-    private var currentPosition: BannerPosition {
-        BannerPosition(rawValue: bannerPosition) ?? .topRight
-    }
 
     var body: some View {
         Form {
@@ -23,96 +17,20 @@ struct NotificationPage: View {
                 Hint("Bildirim gelen uygulamanın renginde ekran kenarı ışıması, çentikte simgesi ve yüzen bildirim — hepsi birlikte. Her uygulama kendi sayfasından ayrıca kapatılabilir.")
             }
 
-            Section("Yüzen Bildirim (Banner)") {
-                Toggle("Ekranda yüzen bildirim penceresi göster", isOn: $bannerEnabled)
-
-                if bannerEnabled {
-                    LabeledContent("Bildirim konumu") {
-                        VStack(alignment: .trailing, spacing: 6) {
-                            HStack(spacing: 8) {
-                                PositionButton(
-                                    title: "Üst Sol",
-                                    icon: "arrow.up.left",
-                                    position: .topLeft,
-                                    current: currentPosition
-                                ) { select(.topLeft) }
-
-                                PositionButton(
-                                    title: "Üst Orta",
-                                    icon: "arrow.up",
-                                    position: .topCenter,
-                                    current: currentPosition
-                                ) { select(.topCenter) }
-
-                                PositionButton(
-                                    title: "Üst Sağ",
-                                    icon: "arrow.up.right",
-                                    position: .topRight,
-                                    current: currentPosition
-                                ) { select(.topRight) }
+            Section("Mesaj İçeriği") {
+                LabeledContent("Bildirim metinleri") {
+                    if controller.hasFullDiskAccess {
+                        Label("Okunuyor", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                    } else {
+                        Button("Tam Disk Erişimi Ver…") {
+                            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
+                                NSWorkspace.shared.open(url)
                             }
-
-                            HStack(spacing: 8) {
-                                PositionButton(
-                                    title: "Alt Sol",
-                                    icon: "arrow.down.left",
-                                    position: .bottomLeft,
-                                    current: currentPosition
-                                ) { select(.bottomLeft) }
-
-                                PositionButton(
-                                    title: "Alt Orta",
-                                    icon: "arrow.down",
-                                    position: .bottomCenter,
-                                    current: currentPosition
-                                ) { select(.bottomCenter) }
-
-                                PositionButton(
-                                    title: "Alt Sağ",
-                                    icon: "arrow.down.right",
-                                    position: .bottomRight,
-                                    current: currentPosition
-                                ) { select(.bottomRight) }
-                            }
-
-                            if Notch.current != nil {
-                                PositionButton(
-                                    title: "Çentik",
-                                    icon: "macbook",
-                                    position: .notch,
-                                    current: currentPosition,
-                                    width: 226
-                                ) { select(.notch) }
-                            }
-                        }
-                    }
-
-                    if currentPosition == .notch {
-                        Hint("Bildirim çentiğin altında birkaç saniye görünür, açılmayanlar çentikte bekler. Çentiğin üzerine gelince uygulamaya göre gruplanmış olarak açılır.")
-                    }
-
-                    LabeledContent("Mesaj içeriği") {
-                        if controller.hasFullDiskAccess {
-                            Label("Gösteriliyor", systemImage: "checkmark.circle.fill")
-                                .foregroundStyle(.green)
-                        } else {
-                            Button("Tam Disk Erişimi Ver…") {
-                                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
-                                    NSWorkspace.shared.open(url)
-                                }
-                            }
-                        }
-                    }
-                    Hint("İzin verildiğinde bildirimler başlık ve metniyle gelir; verilmezse yalnızca okunmamış sayısı gösterilir.")
-
-                    HStack {
-                        Hint("Bildirim geldiğinde seçtiğin ekran konumunda native görünümlü cam kart olarak belirir.")
-                        Spacer()
-                        Button("Bildirimi Test Et") {
-                            controller.testBanner(position: currentPosition)
                         }
                     }
                 }
+                Hint("İzin verildiğinde bildirimler başlık ve metniyle gelir; verilmezse yalnızca okunmamış sayısı gösterilir.")
             }
             .disabled(!enabled)
 
@@ -128,11 +46,6 @@ struct NotificationPage: View {
             }
         }
         .onChange(of: sound) { preview() }
-    }
-
-    private func select(_ pos: BannerPosition) {
-        bannerPosition = pos.rawValue
-        controller.testBanner(position: pos)
     }
 
     private func preview() {
@@ -177,19 +90,61 @@ private struct PositionButton: View {
 
 // MARK: - Görünüm Ayarları
 
-/// How notifications look: the screen-edge glow and the menu bar item.
+/// How a notification looks: which of the notch, the glow and the card it uses, and their settings.
 struct AppearancePage: View {
     let controller: AlarmController
-    @AppStorage(Pref.notifyGlow) private var glow = true
+    @AppStorage(Pref.notifyStyle) private var styleName = NotifyStyle.full.rawValue
     @AppStorage(Pref.notifyGlowIntensity) private var intensity = 0.8
     @AppStorage(Pref.notifyGlowSeconds) private var glowSeconds = 1.0
+    @AppStorage(Pref.notifyBannerPosition) private var bannerPosition = BannerPosition.topRight.rawValue
     @AppStorage(Pref.showMenuBarCount) private var showMenuBarCount = true
+
+    private var style: NotifyStyle { NotifyStyle(rawValue: styleName) ?? .full }
+    private var currentPosition: BannerPosition { BannerPosition(rawValue: bannerPosition) ?? .topRight }
 
     var body: some View {
         Form {
-            Section("Ekran Işıması") {
-                Toggle("Ekran kenarlarında ışıma efekti", isOn: $glow)
-                Group {
+            Section("Bildirim Stili") {
+                ForEach(NotifyStyle.allCases) { option in
+                    StyleRow(style: option, isSelected: option == style) {
+                        styleName = option.rawValue
+                        controller.testNotification()
+                    }
+                }
+                HStack {
+                    Hint(Notch.current == nil ? "Bu Mac'te çentik yok; çentik kullanan stiller yalnızca menü çubuğundaki sayıyı gösterir." : "Işıma rengi her uygulamanın kendi sayfasından seçilir.")
+                    Spacer()
+                    Button("Önizle") { controller.testNotification() }
+                }
+            }
+
+            if style.showsBanner {
+                Section("Yüzen Bildirim") {
+                    LabeledContent("Bildirim konumu") {
+                        VStack(alignment: .trailing, spacing: 6) {
+                            HStack(spacing: 8) {
+                                PositionButton(title: "Üst Sol", icon: "arrow.up.left", position: .topLeft, current: currentPosition) { select(.topLeft) }
+                                PositionButton(title: "Üst Orta", icon: "arrow.up", position: .topCenter, current: currentPosition) { select(.topCenter) }
+                                PositionButton(title: "Üst Sağ", icon: "arrow.up.right", position: .topRight, current: currentPosition) { select(.topRight) }
+                            }
+                            HStack(spacing: 8) {
+                                PositionButton(title: "Alt Sol", icon: "arrow.down.left", position: .bottomLeft, current: currentPosition) { select(.bottomLeft) }
+                                PositionButton(title: "Alt Orta", icon: "arrow.down", position: .bottomCenter, current: currentPosition) { select(.bottomCenter) }
+                                PositionButton(title: "Alt Sağ", icon: "arrow.down.right", position: .bottomRight, current: currentPosition) { select(.bottomRight) }
+                            }
+                            if Notch.current != nil {
+                                PositionButton(title: "Çentik", icon: "macbook", position: .notch, current: currentPosition, width: 226) { select(.notch) }
+                            }
+                        }
+                    }
+                    if currentPosition == .notch {
+                        Hint("Bildirim çentiğin altında birkaç saniye görünür, açılmayanlar çentikte bekler.")
+                    }
+                }
+            }
+
+            if style.showsGlow {
+                Section("Ekran Işıması") {
                     LabeledContent("Işıma yoğunluğu") {
                         HStack(spacing: 8) {
                             Image(systemName: "sun.min").foregroundStyle(.secondary)
@@ -205,18 +160,55 @@ struct AppearancePage: View {
                         Divider()
                         Text("Bildirimler okunana kadar").tag(0.0)
                     }
-                    HStack {
-                        Hint("Işıma rengi her uygulamanın kendi sayfasından seçilir.")
-                        Spacer()
-                        Button("Önizle") { controller.testNotification() }
-                    }
                 }
-                .disabled(!glow)
             }
 
             Section("Menü Çubuğu") {
                 Toggle("Okunmamış sayısını zil simgesinin yanında göster", isOn: $showMenuBarCount)
             }
         }
+    }
+
+    private func select(_ position: BannerPosition) {
+        bannerPosition = position.rawValue
+        controller.testNotification()
+    }
+}
+
+/// One notification style to choose from, with what it does written under its name.
+private struct StyleRow: View {
+    let style: NotifyStyle
+    let isSelected: Bool
+    let onSelect: () -> Void
+
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(spacing: 10) {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(isSelected ? AnyShapeStyle(Color.accentColor.gradient) : AnyShapeStyle(Color.primary.opacity(0.08)))
+                    .frame(width: 28, height: 28)
+                    .overlay {
+                        Image(systemName: style.symbol)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(isSelected ? AnyShapeStyle(.white) : AnyShapeStyle(Color.secondary))
+                    }
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(style.title)
+                    Text(style.detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 8)
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .foregroundStyle(Color.accentColor)
+                        .fontWeight(.semibold)
+                }
+            }
+            .contentShape(Rectangle())
+            .padding(.vertical, 2)
+        }
+        .buttonStyle(.plain)
     }
 }

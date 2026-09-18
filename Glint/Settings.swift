@@ -12,10 +12,9 @@ enum Pref {
     static let overrideSystemVolume = "overrideSystemVolume"
     static let preventSleep = "preventSleep"
     static let notifyEnabled = "notifyEnabled"
-    static let notifyGlow = "notifyGlow"
+    static let notifyStyle = "notifyStyle"
     static let notifyGlowIntensity = "notifyGlowIntensity"
     static let notifyGlowSeconds = "notifyGlowSeconds"
-    static let notifyBanner = "notifyBanner"
     static let notifyBannerPosition = "notifyBannerPosition"
     static let notifySound = "notifySound"
     static let notifyVolume = "notifyVolume"
@@ -45,10 +44,9 @@ enum Pref {
         overrideSystemVolume: true,
         preventSleep: true,
         notifyEnabled: true,
-        notifyGlow: true,
+        notifyStyle: NotifyStyle.full.rawValue,
         notifyGlowIntensity: 0.8,
         notifyGlowSeconds: 1.0,
-        notifyBanner: true,
         notifyBannerPosition: BannerPosition.topRight.rawValue,
         notifySound: "builtin.ding",
         notifyVolume: 0.6,
@@ -74,6 +72,8 @@ enum Pref {
         // Glint used to announce a message from its badge and fill the text in later; now a
         // notification waits until its text is there and everything comes at once.
         "badgeFallback",
+        // The glow and the banner each had a switch; `notifyStyle` carries both.
+        "notifyGlow", "notifyBanner",
         "apnsKeyID", "apnsTeamID", "callDelayMinutes", "maxVolume", "notifyGlowColor", "pairingCode",
         "proximityDelay", "proximityDeviceID", "proximityDeviceName", "proximityEnabled",
         "proximityLostTimeout", "proximityRequireIdle", "proximityThreshold", "repeatCallMinutes",
@@ -90,12 +90,77 @@ enum Pref {
         }
     }
 
+    /// Glint used to have a switch for the glow and another for the banner; they are one style now.
+    static func migrateNotifyStyle(_ d: UserDefaults = .standard) {
+        guard d.string(forKey: notifyStyle) == nil else { return }
+        let hadGlow = d.object(forKey: "notifyGlow") as? Bool ?? true
+        let hadBanner = d.object(forKey: "notifyBanner") as? Bool ?? true
+        let style: NotifyStyle = switch (hadGlow, hadBanner) {
+        case (true, true): .full
+        case (true, false): .notchGlow
+        case (false, true): .banner
+        case (false, false): .notch
+        }
+        d.set(style.rawValue, forKey: notifyStyle)
+    }
+
     static func removeObsoleteSettings() {
         let d = UserDefaults.standard
         for key in obsoleteKeys where d.object(forKey: key) != nil {
             d.removeObject(forKey: key)
         }
     }
+}
+
+/// How a notification shows itself. Sound and the alarm are separate; this is only what's seen.
+enum NotifyStyle: String, CaseIterable, Identifiable {
+    /// The notch, the screen-edge glow and a card with the message.
+    case full
+    /// The notch and the glow; the message waits in the notch instead of a card.
+    case notchGlow
+    /// The notch alone: the app's icon with the number of waiting notifications on it.
+    case notch
+    /// A card with the message, and nothing else.
+    case banner
+    /// The screen edges alone.
+    case glow
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .full: "Tam"
+        case .notchGlow: "Çentik ve ışıma"
+        case .notch: "Yalnızca çentik"
+        case .banner: "Yalnızca yüzen bildirim"
+        case .glow: "Yalnızca ışıma"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .full: "Çentikte simge, ekran kenarında ışıma ve mesajı gösteren kart."
+        case .notchGlow: "Çentikte simge ve ekran kenarında ışıma; mesaj çentikte bekler."
+        case .notch: "Çentik büyür, uygulamanın simgesi ve bekleyen bildirim sayısı görünür."
+        case .banner: "Yalnızca mesajı gösteren kart."
+        case .glow: "Yalnızca ekran kenarlarında ışıma."
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .full: "rectangle.inset.filled.badge.record"
+        case .notchGlow: "macbook.gen2"
+        case .notch: "rectangle.topthird.inset.filled"
+        case .banner: "rectangle.fill.on.rectangle.fill"
+        case .glow: "sparkles.rectangle.stack"
+        }
+    }
+
+    var showsGlow: Bool { self == .full || self == .notchGlow || self == .glow }
+    var showsBanner: Bool { self == .full || self == .banner }
+    /// Whether a notification takes its place in the notch, where it waits to be read.
+    var showsNotch: Bool { self != .glow }
 }
 
 enum AlarmStyle: String, CaseIterable, Identifiable {
@@ -170,16 +235,19 @@ struct AppSettings {
     var overrideSystemVolume: Bool
     var preventSleep: Bool
     var notifyEnabled: Bool
-    var notifyGlow: Bool
+    var notifyStyle: NotifyStyle
     var notifyGlowIntensity: Double
     /// nil = keep glowing until the messages are read.
     var notifyGlowDuration: TimeInterval?
-    var notifyBanner: Bool
     var notifyBannerPosition: BannerPosition
     var notifySoundID: String
     var notifyVolume: Double
-    /// Notify as soon as a badge rises, without waiting for the notification's record to be written.
     var quietDuringFocus: Bool
+
+    /// Whether the chosen style lights the screen's edges.
+    var notifyGlow: Bool { notifyStyle.showsGlow }
+    /// Whether it puts a card on screen; without one, a notification waits in the notch instead.
+    var notifyBanner: Bool { notifyStyle.showsBanner }
     /// nil = no quiet hours.
     var quietHours: QuietHours?
     var importantKeywords: [String]
@@ -199,10 +267,9 @@ struct AppSettings {
             overrideSystemVolume: d.bool(forKey: Pref.overrideSystemVolume),
             preventSleep: d.bool(forKey: Pref.preventSleep),
             notifyEnabled: d.bool(forKey: Pref.notifyEnabled),
-            notifyGlow: d.bool(forKey: Pref.notifyGlow),
+            notifyStyle: NotifyStyle(rawValue: d.string(forKey: Pref.notifyStyle) ?? "") ?? .full,
             notifyGlowIntensity: d.double(forKey: Pref.notifyGlowIntensity),
             notifyGlowDuration: glowSeconds > 0 ? glowSeconds : nil,
-            notifyBanner: d.bool(forKey: Pref.notifyBanner),
             notifyBannerPosition: BannerPosition(rawValue: d.string(forKey: Pref.notifyBannerPosition) ?? "") ?? .topRight,
             notifySoundID: d.string(forKey: Pref.notifySound) ?? "builtin.ding",
             notifyVolume: d.double(forKey: Pref.notifyVolume),

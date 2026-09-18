@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         terminateOtherInstances()
         NSApp.mainMenu = makeMainMenu()
         Pref.migrateLegacySettings()
+        Pref.migrateNotifyStyle()
         Pref.removeObsoleteSettings()
 
         let controller = AlarmController()
