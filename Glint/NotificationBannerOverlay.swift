@@ -590,7 +590,8 @@ private final class BannerPanel {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        // The glass draws its own edge and shadow; a window shadow would outline the transparent margin.
+        // The glass draws no shadow of its own here, and the cards carry theirs; a window shadow
+        // would outline the transparent margin instead.
         panel.hasShadow = false
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
@@ -701,6 +702,7 @@ struct BannerStackView: View {
         // Banners that don't fit on the screen scroll; the margins are inside, so the close buttons
         // overhanging the cards aren't cut off.
         ScrollView(.vertical) {
+            GlassEffectContainer(spacing: 10) {
             VStack(spacing: 10) {
                 ForEach(stacks) { stack in
                     BannerStackCards(
@@ -719,7 +721,11 @@ struct BannerStackView: View {
             .padding(NotificationBannerOverlay.margin)
             .frame(width: NotificationBannerOverlay.cardWidth + 2 * NotificationBannerOverlay.margin)
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { onContentHeight($0) }
+            }
         }
+        // The panel never becomes key, and glass drawn in a window macOS thinks is inactive comes out
+        // flat and dark; this is the same trick the notch's blur uses.
+        .environment(\.controlActiveState, .active)
         // With “always show” scroll bars a scroller would sit in the transparent panel and take room
         // from the cards; scrolling still works without it.
         .scrollIndicators(.never)
@@ -932,7 +938,11 @@ struct BannerCardView: View {
         .frame(minHeight: 62)
         .contentShape(Self.shape)
         .onTapGesture(perform: onTap)
-        .glassEffect(in: Self.shape)
+        // What macOS's own notifications are made of: the HUD material sampling what's behind the
+        // window, a hairline along the edge, and a shadow under the card.
+        .background { CardBackdrop().clipShape(Self.shape) }
+        .overlay { Self.shape.strokeBorder(.white.opacity(0.14), lineWidth: 0.5) }
+        .shadow(color: .black.opacity(0.3), radius: 12, y: 4)
         .overlay(alignment: .trailing) {
             if hovered {
                 Button("Aç", action: onOpen)
@@ -1010,6 +1020,22 @@ struct BannerCardView: View {
         .foregroundStyle(.secondary)
         .glassEffect(in: Circle())
         .help("Kapat")
+    }
+}
+
+/// The material macOS's own notification banners are built on, always drawn in its active state:
+/// the panel never becomes key, and an inactive material comes out flat and grey.
+private struct CardBackdrop: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .hudWindow
+        view.blendingMode = .behindWindow
+        view.state = .active
+        return view
+    }
+
+    func updateNSView(_ view: NSVisualEffectView, context: Context) {
+        view.state = .active
     }
 }
 
