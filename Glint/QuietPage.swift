@@ -22,7 +22,7 @@ struct QuietPage: View {
                         Text(controller.quietReason.map { "Sessiz (\($0.title))" } ?? "Bildirimler sesli")
                     }
                 }
-                Hint("Sessizken ses, ekran ışıması ve alarm olmaz; yüzen bildirimler yine sessizce gelir ve çentikte bekler.")
+                Hint("Sessizken ses, ışıma ve alarm olmaz; yüzen bildirimler sessizce gelir.")
             }
 
             Section("macOS Odak") {
@@ -32,7 +32,7 @@ struct QuietPage: View {
                         Button("Ayarları Aç…", action: SystemSettings.openFullDiskAccess)
                     }
                 }
-                Hint("Rahatsız Etme, Uyku, İş gibi bir Odak elle ya da zamanlamayla açıldığında Glint de sessiz kalır. macOS Odak durumunu korumalı bir dosyada tuttuğu için Tam Disk Erişimi gerekir.")
+                Hint("Rahatsız Etme, Uyku, İş gibi bir Odak açıkken Glint de sessiz kalır. Tam Disk Erişimi gerekir.")
             }
 
             Section("Sessiz Saatler") {
@@ -49,7 +49,7 @@ struct QuietPage: View {
                 TextField("Önemli kelimeler", text: $keywords, prompt: Text("ör. @Burak, acil, Ahmet Yılmaz"), axis: .vertical)
                     .lineLimit(2...4)
                 Toggle("Önemli bildirimler sessiz modu deler", isOn: $importantBreaksQuiet)
-                Hint("Başlığında ya da metninde bu kelimelerden biri geçen bildirim önemlidir. Kelimeleri virgülle ya da satır satır ayır; büyük/küçük harf ve aksan fark etmez. Bir uygulamanın sayfasından alarmını yalnızca önemli bildirimlerde çalacak şekilde ayarlayabilirsin. Metin Tam Disk Erişimiyle okunur; metni okunamayan bildirim için alarm yine çalar.")
+                Hint("Başlığında ya da metninde bu kelimeler geçen bildirim önemlidir. Virgülle ya da satır satır yaz; büyük/küçük harf fark etmez.")
             }
         }
     }

@@ -47,6 +47,9 @@ final class AlarmController {
     private static let instantRecordWindow: TimeInterval = 60
     /// How long such a message is remembered, so a late record is still recognised.
     private static let instantEchoLifetime: TimeInterval = 120
+    /// How long an announcement stands in for the system log's line about that same notification,
+    /// which Notification Center writes about a quarter of a second after it shows it.
+    private static let deliverySignalWindow: TimeInterval = 3
     /// Diagnostics (Console.app, subsystem dev.burak.glint). Never logs notification content.
     private static let log = Logger(subsystem: "dev.burak.glint", category: "notifications")
 
@@ -114,19 +117,28 @@ final class AlarmController {
     @ObservationIgnored private let whatsapp = WhatsAppMessageSource()
     /// Teams keeps its chats the same way, in its embedded browser's store.
     @ObservationIgnored private let teams = TeamsMessageSource()
+    /// macOS's own word that it has just shown a notification: the instant signal for the apps whose
+    /// Dock icon never carries a badge (Claude, Antigravity and the like).
+    @ObservationIgnored private let deliveryLog = NotificationLogWatcher()
 
-    /// A message an app's own database reported. The badge rise that comes with it, and the record
-    /// macOS writes seconds later, are that same message rather than new ones.
-    private struct InstantEcho {
-        let delivered: Date
+    /// A notification Glint has already announced, and which of the other signals for it have been
+    /// through. macOS tells Glint about the same notification three ways — the app's own database,
+    /// the app's Dock badge, and the system log the moment Notification Center shows it — and each
+    /// notification must be announced exactly once.
+    private struct Announcement {
+        /// When Glint announced it.
         let at: Date
-        var badgeCovered = false
-        var recordCovered = false
+        /// When the app says the message arrived; only the app's own database knows that.
+        let delivered: Date?
+        /// Whether its text is already on screen, so macOS's record has nothing to add.
+        let hasContent: Bool
+        var badgeSeen = false
+        var logSeen = false
+        var recordSeen = false
     }
 
-    /// Per app, oldest first: the messages read from the app's own database, until the badge rise and
-    /// the record that belong to them have been through.
-    @ObservationIgnored private var instantEchoes: [String: [InstantEcho]] = [:]
+    /// Per app, oldest first: what has been announced, until every signal for it has been through.
+    @ObservationIgnored private var announcements: [String: [Announcement]] = [:]
     /// Since when the database's records can't be read; meanwhile badges report new notifications.
     @ObservationIgnored private var recordsFailingSince: Date?
     /// Apps whose badge rose without a record while they have no records at all.
@@ -159,6 +171,9 @@ final class AlarmController {
         }
         teams.onMessage = { [weak self] message in
             self?.handleInstantMessage(message)
+        }
+        deliveryLog.onDelivery = { [weak self] bundleID in
+            self?.handleDeliverySignal(bundleID: bundleID)
         }
 
         // The notch island's settings button.
@@ -207,6 +222,7 @@ final class AlarmController {
         let teamsWatched = watched.contains { $0.bundleIDs.contains(TeamsMessageSource.bundleID) }
         teams.update(enabled: hasFullDiskAccess && teamsWatched && !isPaused)
         teams.check()
+        deliveryLog.update(enabled: !isPaused && settings.notifyEnabled && !watched.isEmpty)
         bannerOverlay.configure(position: settings.notifyBannerPosition, enabled: settings.notifyEnabled && settings.notifyBanner)
         updateQuiet(settings: settings)
 
@@ -269,7 +285,7 @@ final class AlarmController {
                     // One rise can count several messages; each gets its own place in the queue.
                     let messages = max(count - previous, 1)
                     // Those the app's own database already reported are this rise, not something new.
-                    let reported = coverInstantForBadge(appID: app.id, messages: messages, now: now)
+                    let reported = cover(app.id, \.badgeSeen, limit: messages, within: Self.instantBadgeWindow, now: now)
                     let newMessages = messages - reported
                     Self.log.notice("\(app.id, privacy: .public): badge rise +\(messages) reportedByApp=\(reported) inUse=\(inUse) waitsForRecord=\(waitsForRecord)")
 
@@ -277,8 +293,9 @@ final class AlarmController {
                         // On screen already, or the app's own database has reported it.
                     } else if waitsForRecord {
                         // Queued unannounced: the record reports it, and an app whose records never come
-                        // is still reported as a problem.
+                        // is still reported as a problem. The system log's line for it is this same one.
                         pendingBadgeBanners[app.id, default: []].append(PendingBanner(itemID: nil, announced: false, at: now))
+                        noteAnnouncement(appID: app.id, at: now, hasContent: false, badgeSeen: true)
                     } else {
                         // In record mode this is the first half of the notification: the island and the
                         // glow say a message came, and the banner waits for the record to say what it
@@ -292,6 +309,10 @@ final class AlarmController {
                             for _ in 1..<newMessages {
                                 pendingBadgeBanners[app.id, default: []].append(PendingBanner(itemID: nil, announced: true, at: now))
                             }
+                        }
+                        // The system log's lines for these are the same notifications, already announced.
+                        for _ in 0..<newMessages {
+                            noteAnnouncement(appID: app.id, at: now, hasContent: false, badgeSeen: true)
                         }
                     }
                 }
@@ -403,7 +424,7 @@ final class AlarmController {
             guard !isPaused else { continue }
 
             // Its app reported this message itself, seconds ago; the record is the same one arriving late.
-            if takeInstantEcho(for: app.id, delivered: delivered, now: now) {
+            if takeContentAnnouncement(for: app.id, delivered: delivered, now: now) {
                 Self.log.notice("\(app.id, privacy: .public): record is a message the app already reported")
                 continue
             }
@@ -483,7 +504,7 @@ final class AlarmController {
         guard config.isWatched else { return }
 
         let now = Date()
-        instantEchoes[app.id, default: []].append(InstantEcho(delivered: message.date, at: now))
+        noteAnnouncement(appID: app.id, at: now, delivered: message.date, hasContent: true)
 
         // The chat the user has open: the app reads it the moment it lands, so its chat keeps no
         // unread count — which is also why macOS writes no record for it.
@@ -517,39 +538,98 @@ final class AlarmController {
         )
     }
 
-    /// Marks up to `messages` of the app's own reported messages as what this badge rise counted, and
-    /// says how many: a rise for messages already reported isn't a new notification.
-    private func coverInstantForBadge(appID: String, messages: Int, now: Date) -> Int {
-        pruneInstantEchoes(now: now)
-        guard var echoes = instantEchoes[appID] else { return 0 }
+    /// macOS has just shown a notification for this app, as its system log says the moment it happens.
+    /// This is the half a Dock badge plays — that something arrived — for apps that never badge; the
+    /// text follows from the notification's record a few seconds later.
+    private func handleDeliverySignal(bundleID: String) {
+        guard !isPaused,
+              let app = WatchedApp.all.first(where: { app in
+                  app.bundleIDs.contains { $0.caseInsensitiveCompare(bundleID) == .orderedSame }
+              })
+        else { return }
+        let config = WatchedAppStore.shared.config(for: app)
+        guard config.isWatched else { return }
+
+        let now = Date()
+        // Its own database or its badge has announced this notification already.
+        guard cover(app.id, \.logSeen, limit: 1, within: Self.deliverySignalWindow, now: now) == 0 else { return }
+        // The user is in the app: the message is in front of them.
+        guard !ActiveConversation.isInUse(app) else {
+            Self.log.notice("\(app.id, privacy: .public): delivery while the app is in use; not notified")
+            return
+        }
+
+        let settings = AppSettings.load()
+        let recordMode = hasFullDiskAccess && recordsFailingSince == nil
+        // With "tell me the moment it arrives" off, the record alone reports it, as with badges.
+        guard !recordMode || settings.badgeFallback else {
+            pendingBadgeBanners[app.id, default: []].append(PendingBanner(itemID: nil, announced: false, at: now))
+            noteAnnouncement(appID: app.id, at: now, hasContent: false, logSeen: true)
+            return
+        }
+
+        Self.log.notice("\(app.id, privacy: .public): macOS says a notification was delivered (system log)")
+        let itemID = handleNewNotification(
+            for: app, config: config, count: max(appStatuses[app.id]?.unread ?? 0, 1),
+            popsBanner: !recordMode, settings: settings
+        )
+        noteAnnouncement(appID: app.id, at: now, hasContent: false, logSeen: true)
+        if recordMode {
+            pendingBadgeBanners[app.id, default: []].append(PendingBanner(itemID: itemID, announced: true, at: now))
+        }
+    }
+
+    /// Marks up to `limit` of the app's announcements as accounted for by this signal, and says how
+    /// many: a badge rise or a log line for a notification already announced isn't a new one.
+    private func cover(
+        _ appID: String,
+        _ flag: WritableKeyPath<Announcement, Bool>,
+        limit: Int,
+        within window: TimeInterval,
+        now: Date
+    ) -> Int {
+        pruneAnnouncements(now: now)
+        guard var list = announcements[appID] else { return 0 }
         var covered = 0
-        for index in echoes.indices where covered < messages {
-            guard !echoes[index].badgeCovered,
-                  now.timeIntervalSince(echoes[index].at) < Self.instantBadgeWindow else { continue }
-            echoes[index].badgeCovered = true
+        for index in list.indices where covered < limit {
+            guard !list[index][keyPath: flag], now.timeIntervalSince(list[index].at) < window else { continue }
+            list[index][keyPath: flag] = true
             covered += 1
         }
-        instantEchoes[appID] = echoes
+        announcements[appID] = list
         return covered
     }
 
-    /// Whether this record is a message its app already reported, which is then off the queue.
-    private func takeInstantEcho(for appID: String, delivered: Date, now: Date) -> Bool {
-        pruneInstantEchoes(now: now)
-        guard var echoes = instantEchoes[appID],
-              let index = echoes.firstIndex(where: {
-                  !$0.recordCovered && abs($0.delivered.timeIntervalSince(delivered)) < Self.instantRecordWindow
+    /// Whether this record is a message its app already reported with its text, which is then off
+    /// the queue. Announcements without text aren't matched: their record is what fills them in.
+    private func takeContentAnnouncement(for appID: String, delivered: Date, now: Date) -> Bool {
+        pruneAnnouncements(now: now)
+        guard var list = announcements[appID],
+              let index = list.firstIndex(where: {
+                  $0.hasContent && !$0.recordSeen
+                      && abs(($0.delivered ?? $0.at).timeIntervalSince(delivered)) < Self.instantRecordWindow
               })
         else { return false }
-        echoes[index].recordCovered = true
-        instantEchoes[appID] = echoes
+        list[index].recordSeen = true
+        announcements[appID] = list
         return true
     }
 
-    private func pruneInstantEchoes(now: Date) {
-        for (appID, echoes) in instantEchoes {
-            let kept = echoes.filter { now.timeIntervalSince($0.at) < Self.instantEchoLifetime }
-            instantEchoes[appID] = kept.isEmpty ? nil : kept
+    /// Notes that Glint has just announced a notification for an app, and which signal did it.
+    private func noteAnnouncement(
+        appID: String, at: Date, delivered: Date? = nil, hasContent: Bool,
+        badgeSeen: Bool = false, logSeen: Bool = false
+    ) {
+        var announcement = Announcement(at: at, delivered: delivered, hasContent: hasContent)
+        announcement.badgeSeen = badgeSeen
+        announcement.logSeen = logSeen
+        announcements[appID, default: []].append(announcement)
+    }
+
+    private func pruneAnnouncements(now: Date) {
+        for (appID, list) in announcements {
+            let kept = list.filter { now.timeIntervalSince($0.at) < Self.instantEchoLifetime }
+            announcements[appID] = kept.isEmpty ? nil : kept
         }
     }
 

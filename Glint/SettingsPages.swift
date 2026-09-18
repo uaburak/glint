@@ -130,7 +130,7 @@ struct GeneralPage: View {
                         .foregroundStyle(.orange)
                 }
                 Toggle("Mac'in kendiliğinden uyumasını engelle", isOn: $preventSleep)
-                Hint("İzleme açıkken Mac kendiliğinden uyku moduna geçmez (ekran yine kararabilir). MacBook kapağı kapatıldığında Mac uyur.")
+                Hint("İzleme açıkken Mac kendiliğinden uyumaz; kapağı kapatınca yine uyur.")
             }
 
             Section("İzinler") {
@@ -142,7 +142,7 @@ struct GeneralPage: View {
                         Button("İzin Ver…", action: SystemSettings.requestAccessibility)
                     }
                 }
-                Hint("Rozetleri doğrudan Dock'tan da okuyabilmek için gerekir; bazı uygulamaların rozeti yalnızca orada görünür. İzin olmadan Teams gibi uygulamalar yine algılanır.")
+                Hint("Dock'taki rozetleri okumak için gerekir; bazı uygulamaların rozeti yalnızca orada görünür.")
 
                 LabeledContent("Tam Disk Erişimi (SQLite Veritabanı)") {
                     if controller.hasFullDiskAccess {
@@ -152,12 +152,12 @@ struct GeneralPage: View {
                         Button("Ayarları Aç…", action: SystemSettings.openFullDiskAccess)
                     }
                 }
-                Hint("macOS'un doğrudan sistem bildirim veritabanını (usernoted SQLite) okumak ve anlık olay tabanlı izleme yapmak için gereklidir. İsteğe bağlıdır; verilmediğinde Dock ve LaunchServices üzerinden izleme yapılır.")
+                Hint("Bildirim metinlerini okumak ve mesajları anında yakalamak için gerekir. İzin yoksa Glint rozetlerden çalışır.")
             }
 
             Section("Kısayollar") {
                 ForEach(ShortcutAction.allCases) { ShortcutRecorder(action: $0) }
-                Hint("Hangi uygulama öndeyse çalışır. Atamak için düğmeye tıklayıp tuşlara bas (⌘, ⌥ ya da ⌃ ile birlikte); Esc vazgeçer. “Son bildirimi aç” en yeni bildirimin uygulamasını açar, “Tüm bildirimleri temizle” bildirimleri, ışımayı ve çalan alarmı kapatır.")
+                Hint("Hangi uygulama öndeyse çalışır. Atamak için düğmeye tıklayıp tuş birleşimine bas (⌘, ⌥ ya da ⌃ ile); Esc vazgeçer.")
             }
         }
         // The user may have changed it in System Settings meanwhile.
@@ -181,7 +181,7 @@ struct DetectionPage: View {
                     }
                 }
                 Toggle("Ekran kilitliyse anında uzakta say", isOn: $lockCountsAsAway)
-                Hint("Klavye veya fareye bu süre boyunca dokunmadığında uzakta sayılırsın. Bilgisayar başındayken alarm çalmaz, sadece kenar ışıması bildirimi yapılır. Uzaktayken çalan bir alarmdan sonra klavyeye ya da fareye dokunana kadar uzakta sayılmaya devam edersin.")
+                Hint("Klavye ve fareye bu süre boyunca dokunmazsan uzakta sayılırsın. Bilgisayar başındayken alarm çalmaz, yalnızca ışıma olur.")
             }
 
             Section {
@@ -220,7 +220,7 @@ struct AlarmPage: View {
                 ForEach(apps) { app in
                     AlarmAppRow(app: app, controller: controller)
                 }
-                Hint("Bilgisayar başında değilken yalnızca yukarıda açık olan uygulamalardan yeni bildirim geldiğinde tam ekran alarm çalar.")
+                Hint("Uzaktayken yalnızca yukarıda açık olan uygulamalar için alarm çalar.")
             }
 
             Section("Ekran Efekti") {
@@ -246,7 +246,7 @@ struct AlarmPage: View {
                         Text("\(Int($0)) dakikada bir").tag($0)
                     }
                 }
-                Hint("Uzaktayken gelen bildirim okunmadıkça alarm bu aralıkla yeniden çalar; klavyeye ya da fareye dokunduğunda durur. Sessiz modda, önemli bir bildirim değilse tekrar etmez.")
+                Hint("Bildirim okunmadıkça alarm bu aralıkla tekrarlar; klavyeye ya da fareye dokununca durur.")
             }
 
             Section("Ses") {
@@ -254,7 +254,7 @@ struct AlarmPage: View {
                 VolumeRow(title: "Ses seviyesi", value: $volume, onRelease: preview)
                 Toggle("Mac sessizde olsa bile alarmı duyur", isOn: $overrideSystemVolume)
                 Hint(overrideSystemVolume
-                     ? "Alarm, Mac sessizde veya düşük seste olsa bile bu seviyede çalar; bitince ses eski haline döner."
+                     ? "Mac sessizde olsa bile alarm bu seviyede çalar; bitince ses eski haline döner."
                      : "Alarm, Mac'in mevcut ses seviyesine bağlı kalır.")
             }
 

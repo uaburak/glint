@@ -50,7 +50,7 @@ struct AppsPage: View {
             }
 
             Section {
-                Hint("Glint, Dock simgesinde okunmamış sayısı (rozet) gösteren her uygulamanın yeni bildirimlerini algılar. Microsoft Teams, WhatsApp, Telegram, Slack, Discord ve Signal yüklüyse kendiliğinden listelenir.")
+                Hint("İstediğin uygulamayı ekleyebilirsin. Teams, WhatsApp, Telegram, Slack, Discord ve Signal yüklüyse kendiliğinden listelenir.")
             }
         }
     }
@@ -203,7 +203,7 @@ struct AppDetailPage: View {
                 LabeledContent("macOS bildirimleri") {
                     Button("Bildirim Ayarlarını Aç…") { app.openNotificationSettings() }
                 }
-                Hint("Glint bildirimi yeni bildirimde ekran kenarında ışıma ve ses verir. Alarm, bilgisayar başında değilken tam ekran uyarı gösterir. Aynı bildirimi iki kez görmemek için macOS ayarlarında “Masaüstü” kutusunun işaretini kaldır; “Bildirim Merkezi” ve “Uygulama simgesi işareti” açık kalmalı.")
+                Hint("Bildirim: ekran kenarında ışıma ve ses. Alarm: bilgisayar başında değilken tam ekran uyarı.")
             }
 
             Section("Görünüm") {

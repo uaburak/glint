@@ -21,9 +21,9 @@ struct NotificationPage: View {
         Form {
             Section {
                 Toggle("Yeni bildirimlerde Glint bildirimi göster", isOn: $enabled)
-                Hint("Uygulamalar sayfasındaki bir uygulamaya bildirim geldiğinde ekran kenarında o uygulamanın renginde ışıma ve bildirim sesi verilir. Tam Disk Erişimi varsa Glint bildirimleri doğrudan macOS'un Bildirim Merkezi kaydından okur; yoksa Dock simgesindeki sayının artmasından anlar. Her uygulama kendi sayfasından ayrıca kapatılabilir.")
+                Hint("Bildirim gelen uygulamanın renginde ekran kenarı ışıması ve ses. Her uygulama kendi sayfasından ayrıca kapatılabilir.")
                 Toggle("Mesaj geldiği anda haber ver, içerik gelince göster", isOn: $badgeFallback)
-                Hint("Açıkken iki aşamalı olur: simgedeki sayı artar artmaz çentikteki ada büyür ve ekran kenarı ışıldar, mesajın kimden geldiği ve içeriği geldiğinde de yüzen bildirim çıkar. macOS bu içeriği yazmak için mesaj akışının durmasını bekler, arka arkaya gelen mesajlarda bu 20 saniyeyi bulabilir; bu yüzden ilk haber rozetten verilir. Kapatırsan hiçbir şey gösterilmez, yalnızca içerik geldiğinde tek bir bildirim çıkar.")
+                Hint("Açıkken bildirim anında çentik ve ışımayla duyurulur, metin gelince yüzen bildirime dolar. Kapalıyken yalnızca metin geldiğinde tek bildirim çıkar.")
             }
 
             Section("Yüzen Bildirim (Banner)") {
@@ -91,7 +91,7 @@ struct NotificationPage: View {
                     }
 
                     if currentPosition == .notch {
-                        Hint("Bildirim gelince çentik iki yana genişler: solda uygulamanın simgesi, sağda tüm bildirimleri temizleyen çarpı. Bildirim 6 saniye çentiğin altında görünür; açılmayan bildirimler çentikte bekler ve çentiğin üzerine gelince uygulamaya göre gruplanmış olarak açılır. Bildirimler, okunduğunda ya da kapatıldığında çentikten kalkar. Bekleyen bildirim yokken çentiğin üzerine gelince solda Glint, sağda ayarlar düğmesi görünür.")
+                        Hint("Bildirim çentiğin altında birkaç saniye görünür, açılmayanlar çentikte bekler. Çentiğin üzerine gelince uygulamaya göre gruplanmış olarak açılır.")
                     }
 
                     LabeledContent("Mesaj içeriği") {
@@ -106,7 +106,7 @@ struct NotificationPage: View {
                             }
                         }
                     }
-                    Hint("Tam Disk Erişimiyle bildirimler, başlıkları ve metinleriyle birlikte doğrudan macOS'un Bildirim Merkezi kaydından okunur. İzin yoksa Glint yeni bildirimi Dock simgesindeki sayıdan anlar ve yüzen bildirimde okunmamış sayısını yazar.")
+                    Hint("İzin verildiğinde bildirimler başlık ve metniyle gelir; verilmezse yalnızca okunmamış sayısı gösterilir.")
 
                     HStack {
                         Hint("Bildirim geldiğinde seçtiğin ekran konumunda native görünümlü cam kart olarak belirir.")
@@ -122,12 +122,12 @@ struct NotificationPage: View {
             Section("Varsayılan Ses") {
                 SoundPicker(title: "Bildirim sesi", selection: $sound, preview: preview)
                 VolumeRow(title: "Ses seviyesi", value: $volume, onRelease: preview)
-                Hint("Kendi sesi ya da seviyesi seçilmemiş uygulamalar bunları kullanır. Bildirim sesi Mac'in mevcut ses seviyesine bağlı çalar; Mac sessizdeyse duyulmaz.")
+                Hint("Kendi sesi seçilmemiş uygulamalar bunu kullanır. Mac sessizdeyken duyulmaz.")
             }
             .disabled(!enabled)
 
             Section("Uygulamaların Kendi Bildirimleri") {
-                Hint("Aynı bildirimi iki kez görmemek için macOS'un balonunu kapatabilirsin: Uygulamalar'da uygulamanın sayfasındaki “Bildirim Ayarlarını Aç…” düğmesine bas ve “Masaüstü” kutusunun işaretini kaldır. “Bildirimlere izin ver” ve “Bildirim Merkezi” açık kalmalı: Glint bildirimleri Bildirim Merkezi kaydından okur, “Bildirim Merkezi” kapalı olan uygulamanın bildirimleri Glint'e gelmez. “Uygulama simgesi işareti” de açık kalsın; okunmamış sayısı ve Tam Disk Erişimi olmadığında bildirimler için kullanılır. Glint kendi sesini çaldığı için “Bildirim için ses çal”ı kapatabilirsin.")
+                Hint("Aynı bildirimi iki kez görmemek için uygulamanın sayfasındaki “Bildirim Ayarlarını Aç…” düğmesinden “Masaüstü”nün işaretini kaldır. “Bildirim Merkezi” ve “Uygulama simgesi işareti” açık kalmalı.")
             }
         }
         .onChange(of: sound) { preview() }

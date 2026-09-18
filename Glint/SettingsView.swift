@@ -22,13 +22,27 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .about: "info.circle"
-        case .apps: "square.grid.2x2"
-        case .notifications: "bell.badge"
-        case .alarm: "alarm"
-        case .quiet: "moon"
-        case .appearance: "paintpalette"
-        case .detection: "person.crop.circle.badge.clock"
-        case .general: "gearshape"
+        case .apps: "square.grid.2x2.fill"
+        case .notifications: "bell.badge.fill"
+        case .alarm: "alarm.fill"
+        case .quiet: "moon.fill"
+        case .appearance: "paintpalette.fill"
+        case .detection: "person.fill.viewfinder"
+        case .general: "gearshape.fill"
+        }
+    }
+
+    /// The colour of the icon's tile in the sidebar, as System Settings gives each page its own.
+    var tint: Color {
+        switch self {
+        case .about: .gray
+        case .apps: .blue
+        case .notifications: .red
+        case .alarm: .orange
+        case .quiet: .indigo
+        case .appearance: .pink
+        case .detection: .teal
+        case .general: .gray
         }
     }
 }
@@ -45,15 +59,25 @@ enum SettingsRoute: Hashable {
     }
 }
 
-/// Accent-colored sidebar symbol that turns white on a selected row, where an accent-colored
-/// selection background would otherwise hide it.
+/// A sidebar symbol on its own rounded tile, the way System Settings draws its pages. The tile keeps
+/// its colour on a selected row, where the symbol alone would be lost against the selection.
 private struct SidebarIcon: View {
     let symbol: String
-    @Environment(\.backgroundProminence) private var prominence
+    let tint: Color
+
+    static let size: CGFloat = 20
 
     var body: some View {
-        Image(systemName: symbol)
-            .foregroundStyle(prominence == .increased ? AnyShapeStyle(.white) : AnyShapeStyle(Color.accentColor))
+        RoundedRectangle(cornerRadius: 5, style: .continuous)
+            .fill(tint.gradient)
+            .frame(width: Self.size, height: Self.size)
+            .overlay {
+                Image(systemName: symbol)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.white)
+            }
+            // Room for the tile, which stands taller than the text alone.
+            .padding(.vertical, 1)
     }
 }
 
@@ -186,7 +210,7 @@ struct SettingsView: View {
         Label {
             Text(page.title)
         } icon: {
-            SidebarIcon(symbol: page.symbol)
+            SidebarIcon(symbol: page.symbol, tint: page.tint)
         }
         .tag(page)
     }

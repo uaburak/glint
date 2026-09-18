@@ -42,7 +42,7 @@ struct AboutPage: View {
                         .font(.largeTitle.weight(.bold))
                     Text("Sürüm \(version)")
                         .foregroundStyle(.secondary)
-                    Text("Seçtiğin uygulamalara yeni bildirim geldiğinde ekran kenarında o uygulamanın renginde ışıma ve ses; bilgisayar başında değilken dikkat çeken bir alarm.")
+                    Text("Bildirim geldiğinde uygulamanın renginde ışıma ve ses; uzaktayken alarm.")
                         .multilineTextAlignment(.center)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: 420)
