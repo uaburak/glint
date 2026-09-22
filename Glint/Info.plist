@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Sparkle. The rest of the plist comes from the build settings (GENERATE_INFOPLIST_FILE). -->
+	<key>SUFeedURL</key>
+	<string>https://github.com/uaburak/glint/releases/latest/download/appcast.xml</string>
+	<!-- Updates must be signed with the matching private key (login keychain, see Tools/release.sh). -->
+	<key>SUPublicEDKey</key>
+	<string>RymQOPcTZcxivJPllXQW2zf2G/x86894WNqEqyGZbRA=</string>
+	<!-- Check daily without first asking; the switch is under Genel Ayarlar › Güncelleme. -->
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+</dict>
+</plist>

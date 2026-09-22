@@ -159,9 +159,62 @@ struct GeneralPage: View {
                 ForEach(ShortcutAction.allCases) { ShortcutRecorder(action: $0) }
                 Hint("Hangi uygulama öndeyse çalışır. Atamak için düğmeye tıklayıp tuş birleşimine bas (⌘, ⌥ ya da ⌃ ile); Esc vazgeçer.")
             }
+
+            UpdateSection(updater: AppUpdater.shared)
         }
         // The user may have changed it in System Settings meanwhile.
         .onAppear { launchAtLogin = SMAppService.mainApp.status == .enabled }
+    }
+}
+
+/// Automatic checks, the running version with the last check, and a found update.
+private struct UpdateSection: View {
+    let updater: AppUpdater
+
+    private static let relativeFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.locale = Locale(identifier: "tr_TR")
+        formatter.dateTimeStyle = .named
+        return formatter
+    }()
+
+    var body: some View {
+        Section("Güncelleme") {
+            Toggle("Güncellemeleri otomatik denetle", isOn: Binding(
+                get: { updater.automaticallyChecks },
+                set: { updater.automaticallyChecks = $0 }
+            ))
+
+            if let pending = updater.pendingVersion {
+                LabeledContent {
+                    Button("Yükle…", action: updater.checkForUpdates)
+                } label: {
+                    Label("Glint \(pending) hazır", systemImage: "arrow.down.circle.fill")
+                }
+            }
+
+            LabeledContent {
+                Button("Şimdi Denetle", action: updater.checkForUpdates)
+                    .disabled(!updater.canCheck)
+            } label: {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Sürüm \(updater.currentVersion)")
+                    // Redrawn every minute so "5 dakika önce" doesn't stand still while the page is open.
+                    TimelineView(.everyMinute) { context in
+                        Text(lastCheckText(now: context.date))
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
+            Hint("Güncellemeler geliştirici anahtarıyla imzalanır; imzası tutmayan bir paket indirilse bile kurulmaz.")
+        }
+    }
+
+    private func lastCheckText(now: Date) -> String {
+        guard let lastCheck = updater.lastCheck else { return "Henüz denetlenmedi" }
+        return "Son denetim: " + Self.relativeFormatter.localizedString(for: min(lastCheck, now), relativeTo: now)
     }
 }
 

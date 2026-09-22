@@ -25,6 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         StatusMenuManager.shared.setup(controller: controller)
         GlobalShortcuts.shared.handler = { [weak controller] action in controller?.perform(action) }
         GlobalShortcuts.shared.reload()
+        AppUpdater.shared.start()
 
         let defaults = UserDefaults.standard
         if !defaults.bool(forKey: Pref.hasLaunched) {

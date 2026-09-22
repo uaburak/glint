@@ -25,13 +25,6 @@ struct GlintIcon: View {
 struct AboutPage: View {
     let controller: AlarmController
 
-    private var version: String {
-        let info = Bundle.main.infoDictionary
-        let short = info?["CFBundleShortVersionString"] as? String ?? "1.0"
-        let build = info?["CFBundleVersion"] as? String ?? "1"
-        return "\(short) (\(build))"
-    }
-
     var body: some View {
         Form {
             Section {
@@ -40,7 +33,7 @@ struct AboutPage: View {
                         .padding(.bottom, 4)
                     Text("Glint")
                         .font(.largeTitle.weight(.bold))
-                    Text("Sürüm \(version)")
+                    Text("Sürüm \(AppUpdater.shared.currentVersion)")
                         .foregroundStyle(.secondary)
                     Text("Bildirim geldiğinde uygulamanın renginde ışıma ve ses; uzaktayken alarm.")
                         .multilineTextAlignment(.center)

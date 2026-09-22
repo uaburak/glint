@@ -76,12 +76,42 @@ Ayarlar penceresi System Settings gibidir: sayfalar solda kenar çubuğunda, say
 - İzlemeyi aç/kapat, oturum açılınca başlat, Mac'in kendiliğinden uyumasını engelle
 - Erişilebilirlik ve Tam Disk Erişimi izin durumları
 - Global kısayollar (hangi uygulama öndeyse çalışır): **Son bildirimi aç**, **Tüm bildirimleri temizle**
+- Güncelleme: günde bir kez otomatik denetle, çalışan sürüm ve son denetim zamanı, **Şimdi Denetle**
 
 Bildirim ve alarm birbirinden bağımsızdır: bir uygulamanın bildirimini kapatmak alarmını kapatmaz.
 
 ## Menü çubuğu
 
-Zil simgesinin yanında toplam okunmamış sayısı görünür (Görünüm Ayarları'ndan kapatılabilir). Simge durumu da gösterir: üzeri çizili zil duraklatıldığını, uyarı üçgeni dikkat gerektiren bir sorunu, ay sessiz modu anlatır. Menüde varsa sorunlar (tıklayınca düzeltme ayarı açılır) ve sessiz mod, izlenen uygulamalar (okunmamış sayılarıyla, tıklayınca uygulama açılır), **İzlemeyi Duraklat/Sürdür**, **Mac'i Şimdi Kilitle**, **Ayarlar…** ve **Çık** bulunur.
+Zil simgesinin yanında toplam okunmamış sayısı görünür (Görünüm Ayarları'ndan kapatılabilir). Simge durumu da gösterir: üzeri çizili zil duraklatıldığını, uyarı üçgeni dikkat gerektiren bir sorunu, ay sessiz modu anlatır. Menüde varsa sorunlar (tıklayınca düzeltme ayarı açılır) ve sessiz mod, izlenen uygulamalar (okunmamış sayılarıyla, tıklayınca uygulama açılır), **İzlemeyi Duraklat/Sürdür**, **Mac'i Şimdi Kilitle**, **Ayarlar…**, **Güncellemeleri Denetle…** ve **Çık** bulunur. Başlıkta çalışan sürüm yazar; bulunmuş bir güncelleme varsa en üstte **Glint x.y hazır — Yükle…** çıkar.
+
+## Güncellemeler
+
+Glint kendini [Sparkle](https://sparkle-project.org) ile günceller. Günde bir kez bu deponun en son GitHub Release'ine eklenmiş `appcast.xml`'i okur (`Glint/Info.plist` › `SUFeedURL`); daha yeni bir sürüm varsa sorar, onaylanınca DMG'yi indirir, kurar ve Glint'i yeniden açar.
+
+- Güncelleme Glint'in EdDSA anahtarıyla imzalanır; `SUPublicEDKey` ile tutmayan bir paket indirilse bile kurulmaz.
+- Glint açılışından hemen sonra bulunan güncellemeyi Sparkle kendi penceresinde gösterir. Çalışırken bulunan bir güncelleme araya girmez: menüde ve Genel Ayarlar'da **Glint x.y hazır** olarak bekler.
+- Xcode'dan çalışan Debug derlemeleri kendiliğinden denetlemez (aynı bundle ID'yle yayındaki sürümü önerirdi); **Şimdi Denetle** onlarda da çalışır.
+
+## Sürüm yayınlama
+
+```bash
+Tools/release.sh 1.1 notlar.md
+```
+
+Betik projedeki sürümü ayarlar (derleme numarası bir artar), Release arşivini Developer ID ile imzalar, DMG'yi Apple'a notarize ettirip damgalar, DMG'yi güncelleme anahtarıyla imzalar ve yayındaki `appcast.xml`'e yeni sürümü ekler. Hiçbir şey yüklemez: `build/release/<sürüm>/` altındaki DMG ile `appcast.xml`'i `v<sürüm>` etiketli bir GitHub Release'e ekle ve o Release **latest** olsun. Notlar Markdown yazılır; Sparkle'ın güncelleme penceresinde görünür.
+
+Bir kerelik hazırlık:
+
+1. **Developer ID Application** sertifikası: Xcode › Settings › Accounts › Manage Certificates › **+**. (Apple Development ile imzalı bir uygulama başka Mac'lerde Gatekeeper'a takılır.)
+2. Notarize için kimlik bilgisi (account.apple.com'dan uygulamaya özel parola ile):
+   ```bash
+   xcrun notarytool store-credentials glint-notary --apple-id <apple-id> --team-id Q6GDNC3V8B
+   ```
+3. Güncelleme anahtarı login anahtar zincirinde durur ("https://sparkle-project.org" öğesi). **Yedeğini al:** anahtar kaybolursa dağıtılmış kopyalar bir daha hiç güncellenemez. Araç, betik bir kez çalışınca `build/DerivedData` altında olur:
+   ```bash
+   build/DerivedData/SourcePackages/artifacts/sparkle/Sparkle/bin/generate_keys -x glint-sparkle-key.txt
+   ```
+   Başka bir Mac'e `generate_keys -f glint-sparkle-key.txt` ile alınır.
 
 ## Çentik
 

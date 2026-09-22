@@ -68,10 +68,16 @@ final class StatusMenuManager: NSObject, NSMenuDelegate {
         menu.removeAllItems()
         appItems.removeAll()
 
-        let header = NSMenuItem(title: "Glint", action: nil, keyEquivalent: "")
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
+        let header = NSMenuItem(title: ["Glint", version].compactMap { $0 }.joined(separator: " "), action: nil, keyEquivalent: "")
         header.isEnabled = false
         menu.addItem(header)
         menu.addItem(.separator())
+
+        if let pending = AppUpdater.shared.pendingVersion {
+            addItem("Glint \(pending) hazır — Yükle…", action: #selector(checkForUpdates(_:)), image: symbol("arrow.down.circle.fill"))
+            menu.addItem(.separator())
+        }
 
         // Problems and quiet mode first: they explain the menu bar symbol.
         if let controller, !controller.healthIssues.isEmpty || controller.quietReason != nil {
@@ -119,6 +125,7 @@ final class StatusMenuManager: NSObject, NSMenuDelegate {
 
         menu.addItem(.separator())
         addItem("Ayarlar…", action: #selector(openSettings(_:)), key: ",", image: symbol("gearshape"))
+        addItem("Güncellemeleri Denetle…", action: #selector(checkForUpdates(_:)), image: symbol("arrow.triangle.2.circlepath"))
 
         menu.addItem(.separator())
         addItem("Glint'ten Çık", action: #selector(quit(_:)), key: "q", image: symbol("power"))
@@ -185,6 +192,11 @@ final class StatusMenuManager: NSObject, NSMenuDelegate {
             NSApp.activate(ignoringOtherApps: true)
             SettingsWindowManager.shared.show(controller: controller)
         }
+    }
+
+    @objc private func checkForUpdates(_ sender: Any?) {
+        // After the menu has closed, like openSettings.
+        DispatchQueue.main.async { AppUpdater.shared.checkForUpdates() }
     }
 
     @objc private func quit(_ sender: Any?) {
