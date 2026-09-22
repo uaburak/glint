@@ -7,9 +7,9 @@ import SwiftUI
 /// and reveals its close and "Aç" buttons. The first click on a stack of several notifications spreads
 /// them out, a click on a single card opens the app.
 ///
-/// On a Mac with a notch, notifications also wait below the notch whatever the position: resting the
-/// pointer on the notch opens every waiting notification below it, grouped by app. Nothing else is
-/// drawn there; the card is the only banner. Under the notch, banners grow out of it.
+/// On a Mac with a notch, notifications also wait in the notch whatever the position: the notch grows
+/// with the app's icon while a banner is up (`NotchOverlay`), and hovering it opens every waiting
+/// notification below it, grouped by app. Under the notch, banners grow out of it.
 @MainActor
 final class NotificationBannerOverlay {
     static let shared = NotificationBannerOverlay()
@@ -24,7 +24,7 @@ final class NotificationBannerOverlay {
     static let screenInset: CGFloat = 16
     /// Space between the notch and the banners below it.
     static let notchGap: CGFloat = 6
-    /// Notifications nobody opened wait below the notch; they go once read, or after this long.
+    /// Notifications nobody opened wait in the notch; they go once read, or after this long.
     private static let waitingLifetime: TimeInterval = 30 * 60
     /// How long banners stay after the pointer leaves them.
     private static let lingerAfterHover: TimeInterval = 2.5
@@ -35,9 +35,11 @@ final class NotificationBannerOverlay {
     static let arrival = Animation.spring(response: 0.42, dampingFraction: 0.86)
 
     private let model = BannerStackModel()
-    private lazy var notch: NotchHoverTracker = {
-        let notch = NotchHoverTracker()
+    private lazy var notch: NotchOverlay = {
+        let notch = NotchOverlay(model: model)
         notch.onHoverChanged = { [weak self] hovering in self?.notchHoverChanged(hovering) }
+        notch.onClearAll = { [weak self] in self?.dismiss() }
+        notch.onOpenSettings = { [weak self] in self?.onOpenSettings?() }
         return notch
     }()
     /// Banners popping up at the chosen position (under the notch, it also shows the waiting list).
@@ -46,14 +48,19 @@ final class NotificationBannerOverlay {
     private lazy var listPanel = BannerPanel(model: model, handlers: handlers)
     private var position: BannerPosition = .topRight
     private var bannersEnabled = true
+    /// Whether notifications also go into the notch (and the island sits on it), or only pop up.
+    private var notchEnabled = true
     private var notchAvailable = false
     private var timer: Timer?
     private var notchHovered = false
     private var closeNotchListWork: DispatchWorkItem?
 
+    /// Opens Glint's settings, from the island's settings button.
+    var onOpenSettings: (() -> Void)?
+
     private init() {
         // Banners on screen while a display is plugged in or unplugged: macOS moves their windows,
-        // so they're fitted to their corner (or to the notch) again.
+        // so they're fitted to their corner (or to the notch) again. The island looks after itself.
         NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
         ) { [weak self] _ in
@@ -89,8 +96,10 @@ final class NotificationBannerOverlay {
     /// Shows a notification: on top of its app's stack if that app's banner is up, as a new stack
     /// otherwise. Returns the banner's id, so what it says can be filled in later.
     ///
-    /// With `popping` off nothing pops up: the notification waits below the notch until it's read or
-    /// `fillIn` brings it out with its message. With `waits` off it goes with its banner, notch or not.
+    /// With `popping` off it's the first half of a notification whose message macOS hasn't written
+    /// yet: nothing pops up, it goes into the notch and the island grows for a moment to announce it.
+    /// `fillIn` then brings the banner out with the message. With `waits` off it goes with its banner,
+    /// notch or not.
     @discardableResult
     func show(app: WatchedApp, title: String, body: String, position: BannerPosition, date: Date = Date(), popping: Bool = true, waits: Bool = true) -> UUID {
         if position != self.position {
@@ -100,7 +109,7 @@ final class NotificationBannerOverlay {
 
         let now = Date()
         let item = BannerStackModel.Item(title: title, body: body, date: date)
-        // With a notch, notifications nobody opened wait below it; without one they go with their banner.
+        // With a notch, notifications nobody opened wait in it; without one they go with their banner.
         let lifetime = waits && Notch.current != nil ? Self.waitingLifetime : Self.popDuration
         withAnimation(Self.arrival) {
             if !notchHovered {
@@ -115,6 +124,11 @@ final class NotificationBannerOverlay {
         }
         startTimer()
         syncNotch()
+        if !popping {
+            // Nothing pops up, so the island announces it by itself: long enough to be noticed, short
+            // enough not to sit open while the message is still being written.
+            notch.holdOpenBriefly(4)
+        }
         presentPanels()
         return item.id
     }
@@ -157,10 +171,12 @@ final class NotificationBannerOverlay {
         return true
     }
 
-    /// Follows the settings: where banners pop up and whether they're on.
-    func configure(position: BannerPosition, enabled: Bool) {
+    /// Follows the settings: where banners pop up, whether they're on, and whether notifications go into
+    /// the notch too. With a notch the island sits on it whenever that's on, even before any notification.
+    func configure(position: BannerPosition, enabled: Bool, notch notchEnabled: Bool = true) {
         let hasNotch = Notch.current != nil
-        guard position != self.position || enabled != bannersEnabled || hasNotch != notchAvailable else { return }
+        guard position != self.position || enabled != bannersEnabled || notchEnabled != self.notchEnabled || hasNotch != notchAvailable else { return }
+        self.notchEnabled = notchEnabled
         if !enabled, bannersEnabled {
             dismiss(animated: false)
         }
@@ -306,9 +322,16 @@ final class NotificationBannerOverlay {
 
     // MARK: - Notch
 
-    /// The notch is watched for the pointer while notifications wait below it, whatever the position.
+    /// The island sits on the notch while banners are on, whatever their position, and grows while a
+    /// banner is up or the waiting list is open.
     private func syncNotch() {
-        notch.refresh(tracking: bannersEnabled && Notch.current != nil && !model.stacks.isEmpty)
+        guard Notch.current != nil, bannersEnabled, notchEnabled else {
+            notch.holdsOpen = false
+            notch.refresh(showing: false)
+            return
+        }
+        notch.refresh(showing: true)
+        notch.holdsOpen = !model.stacks.isEmpty && (model.showsAll || model.stacks.contains { $0.popsUntil != nil })
     }
 
     private func notchHoverChanged(_ hovering: Bool) {
@@ -465,7 +488,8 @@ private final class BannerPanel {
         guard !shown.isEmpty else { return }
         let panel = self.panel ?? Self.makePanel()
         self.panel = panel
-        panel.level = position == .notch ? Self.notchLevel : .statusBar
+        // Under the notch the banners stay above the screen-edge glow, like the notch itself.
+        panel.level = position == .notch ? NotchOverlay.level : .statusBar
 
         if hosting == nil {
             let hosting = FirstMouseHostingView(rootView: BannerStackView(
@@ -560,9 +584,6 @@ private final class BannerPanel {
         panel.setFrame(NSRect(x: x, y: y, width: width, height: height), display: true)
     }
 
-    /// Under the notch the banners stay above the screen-edge glow and the alarm, which they drop into.
-    private static let notchLevel = NSWindow.Level(rawValue: NSWindow.Level.screenSaver.rawValue + 1)
-
     private static func makePanel() -> NSPanel {
         let panel = BannerPanelWindow(
             contentRect: NSRect(x: 0, y: 0, width: NotificationBannerOverlay.cardWidth + 2 * NotificationBannerOverlay.margin, height: 100),
@@ -631,6 +652,8 @@ final class BannerStackModel {
         var expiresAt: Date
         /// Until when the stack's banner is up after a new notification.
         var popsUntil: Date?
+        /// Notifications that came in for the stack; the notch island's badge.
+        var received = 1
 
         var id: String { app.id }
     }
@@ -651,6 +674,7 @@ final class BannerStackModel {
     func push(_ item: Item, from app: WatchedApp, expiresAt: Date, popsUntil: Date?, maxStacks: Int = 4) {
         if let index = stacks.firstIndex(where: { $0.id == app.id }) {
             var stack = stacks.remove(at: index)
+            stack.received += 1
             // The newest on top and the rest slide down; a stack isn't capped, the panel scrolls.
             stack.items.insert(item, at: 0)
             stack.expiresAt = expiresAt

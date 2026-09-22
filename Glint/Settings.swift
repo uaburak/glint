@@ -131,9 +131,9 @@ enum Pref {
 /// Where a notification's message shows itself. The screen's effect is `NotifyEffect`, and the
 /// sound and the alarm are their own settings.
 enum NotifyStyle: String, CaseIterable, Identifiable {
-    /// A card pops out with the message, and on a Mac with a notch it waits below the notch too.
+    /// The notch holds it and a card pops out with the message.
     case full
-    /// No card pops out: notifications wait below the notch, shown when the pointer rests on it.
+    /// The notch alone: the app's icon with the number of waiting notifications on it.
     case notch
     /// A card with the message, and nothing else.
     case banner
@@ -153,8 +153,8 @@ enum NotifyStyle: String, CaseIterable, Identifiable {
 
     var detail: String {
         switch self {
-        case .full: "Mesajı gösteren kart; çentikli Mac'lerde okunmayanlar çentiğin altında da bekler."
-        case .notch: "Kart çıkmaz; bildirimler çentiğin altında bekler, üstüne gelince açılır."
+        case .full: "Çentikte uygulamanın simgesi, altında mesajı gösteren kart."
+        case .notch: "Çentik büyür, simge ve bekleyen bildirim sayısı görünür."
         case .banner: "Yalnızca mesajı gösteren kart."
         case .none: "Mesaj gösterilmez; yalnızca seçtiğin efekt ve ses."
         }
@@ -170,9 +170,9 @@ enum NotifyStyle: String, CaseIterable, Identifiable {
     }
 
     var showsBanner: Bool { self == .full || self == .banner }
-    /// Whether a notification waits below the notch to be read, after its card (if any) has gone.
+    /// Whether a notification takes its place in the notch, where it waits to be read.
     var showsNotch: Bool { self == .full || self == .notch }
-    /// Whether the notification shows at all, as a card or below the notch.
+    /// Whether the notification shows at all, as a card or in the notch.
     var showsMessage: Bool { self != .none }
 }
 

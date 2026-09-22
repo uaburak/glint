@@ -105,7 +105,7 @@ final class AlarmController {
     private struct PendingBanner {
         /// The notch item put up for it, when it was announced before its text; nil otherwise.
         let itemID: UUID?
-        /// Whether it was already announced (glow, sound, card), so its record doesn't announce again.
+        /// Whether it was already announced (glow, sound, island), so its record doesn't announce again.
         let announced: Bool
         /// Whether macOS's own log said it was shown — then a notification certainly went up, and one
         /// whose record never comes is still worth reporting late. A badge can rise without any
@@ -180,6 +180,12 @@ final class AlarmController {
             self?.handleDeliverySignal(bundleID: bundleID)
         }
 
+        // The notch island's settings button.
+        bannerOverlay.onOpenSettings = { [weak self] in
+            guard let self else { return }
+            SettingsWindowManager.shared.show(controller: self)
+        }
+
         poll()
     }
 
@@ -221,7 +227,7 @@ final class AlarmController {
         teams.update(enabled: hasFullDiskAccess && teamsWatched && !isPaused)
         teams.check()
         deliveryLog.update(enabled: !isPaused && settings.notifyEnabled && !watched.isEmpty)
-        bannerOverlay.configure(position: settings.notifyBannerPosition, enabled: settings.notifyEnabled && settings.notifyStyle.showsMessage)
+        bannerOverlay.configure(position: settings.notifyBannerPosition, enabled: settings.notifyEnabled && settings.notifyStyle.showsMessage, notch: settings.notifyStyle.showsNotch)
         updateQuiet(settings: settings)
 
         if hasFullDiskAccess {
@@ -298,9 +304,9 @@ final class AlarmController {
                             noteAnnouncement(appID: app.id, at: now, hasContent: false, badgeSeen: true)
                         }
                     } else {
-                        // In record mode this is the first half of the notification: the glow says a
-                        // message came, and the banner waits for the record to say what it is. Without
-                        // records the badge is all there will ever be, so it pops at once.
+                        // In record mode this is the first half of the notification: the island and the
+                        // glow say a message came, and the banner waits for the record to say what it
+                        // is. Without records the badge is all there will ever be, so it pops at once.
                         let itemID = handleNewNotification(
                             for: app, config: config, count: count,
                             popsBanner: !recordMode, settings: settings
@@ -710,8 +716,8 @@ final class AlarmController {
             )
         }
 
-        // The style decides whether a card pops out and whether the notification then waits below the
-        // notch; the effect-only one shows nothing.
+        // The style decides whether the notification takes its place in the notch and whether a card
+        // pops out; the effect-only one shows nothing.
         guard settings.notifyStyle.showsMessage else { return nil }
         let pops = popsBanner && settings.notifyStyle.showsBanner
         let waits = settings.notifyStyle.showsNotch
@@ -867,7 +873,7 @@ final class AlarmController {
                 title: "\(testApp.name) Bildirimi",
                 body: settings.notifyStyle.showsBanner
                     ? "Bu seçilen konumda (\(settings.notifyBannerPosition.title)) örnek bir bildirimdir."
-                    : "Çentiğin altında bekleyen örnek bir bildirimdir.",
+                    : "Çentikte bekleyen örnek bir bildirimdir.",
                 position: settings.notifyBannerPosition,
                 popping: settings.notifyStyle.showsBanner,
                 waits: settings.notifyStyle.showsNotch
