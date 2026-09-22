@@ -579,8 +579,17 @@ private final class BannerPanel {
         panel.setFrame(NSRect(x: x, y: y, width: width, height: height), display: true)
     }
 
+private final class BannerPanelWindow: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
+    override var isKeyWindow: Bool { true }
+    override var isMainWindow: Bool { true }
+    override func resignKey() {}
+    override func resignMain() {}
+}
+
     private static func makePanel() -> NSPanel {
-        let panel = NSPanel(
+        let panel = BannerPanelWindow(
             contentRect: NSRect(x: 0, y: 0, width: NotificationBannerOverlay.cardWidth + 2 * NotificationBannerOverlay.margin, height: 100),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
@@ -725,7 +734,7 @@ struct BannerStackView: View {
         }
         // The panel never becomes key, and glass drawn in a window macOS thinks is inactive comes out
         // flat and dark; this is the same trick the notch's blur uses.
-        .environment(\.controlActiveState, .active)
+        .environment(\.controlActiveState, .key)
         // With “always show” scroll bars a scroller would sit in the transparent panel and take room
         // from the cards; scrolling still works without it.
         .scrollIndicators(.never)
@@ -934,15 +943,12 @@ struct BannerCardView: View {
         .padding(.leading, 12)
         .padding(.trailing, 14)
         .padding(.vertical, 11)
-        .frame(width: NotificationBannerOverlay.cardWidth)
+        .frame(width: NotificationBannerOverlay.cardWidth, alignment: .leading)
         .frame(minHeight: 62)
-        .contentShape(Self.shape)
+        .glassEffect(.clear.interactive(), in: .rect(cornerRadius: 18.0))
+        .contentShape(.rect(cornerRadius: 18.0))
+        .environment(\.controlActiveState, .key)
         .onTapGesture(perform: onTap)
-        // What macOS's own notifications are made of: the HUD material sampling what's behind the
-        // window, a hairline along the edge, and a shadow under the card.
-        .background { CardBackdrop().clipShape(Self.shape) }
-        .overlay { Self.shape.strokeBorder(.white.opacity(0.14), lineWidth: 0.5) }
-        .shadow(color: .black.opacity(0.3), radius: 12, y: 4)
         .overlay(alignment: .trailing) {
             if hovered {
                 Button("Aç", action: onOpen)
