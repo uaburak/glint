@@ -70,7 +70,10 @@ feed URL follows "latest".
 ## 6. Verify from outside, then report
 
 - `curl -sL https://github.com/uaburak/glint/releases/latest/download/appcast.xml` is 200 and its
-  first item is the new version.
+  first item is the new version. GitHub caches the `latest` redirect: for about a minute after
+  publishing it can still point at the previous tag (seen with 1.1), so poll its `Location` header
+  until it names the new tag before checking, and tell the user a check made in that minute still
+  says "güncel".
 - Download the enclosure URL, `sign_update --verify <dmg> <edSignature>` passes
   (`build/DerivedData/SourcePackages/artifacts/sparkle/Sparkle/bin/sign_update`), and with a
   quarantine flag `spctl --assess --type open --context context:primary-signature` says
