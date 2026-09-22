@@ -240,7 +240,8 @@ final class TeamsMessageSource {
                 date: date,
                 // Teams names the open conversation in its window title, which is what tells Glint
                 // whether the user is looking at it.
-                chatUnread: 1
+                chatUnread: 1,
+                thread: fields["conversationLink"].flatMap(thread(fromLink:))
             )))
         }
 
@@ -268,6 +269,7 @@ final class TeamsMessageSource {
     /// The fields a message is put together from.
     private static let messageKeys: Set<String> = [
         "content", "imdisplayname", "originalarrivaltime", "composetime", "from", "clientmessageid",
+        "conversationLink",
     ]
 
     /// V8 writes a string as a tag, its length and its bytes: 0x22 for plain text, 0x63 for UTF-16
@@ -302,6 +304,16 @@ final class TeamsMessageSource {
             index = cursor + length
         }
         return strings
+    }
+
+    /// A message's `conversationLink` ends in its chat's id: "19:…@unq.gbl.spaces" for a one-to-one
+    /// chat, "19:…@thread.v2" for a group. Teams opens a chat by that id.
+    static func thread(fromLink link: String) -> NotificationThread? {
+        guard let range = link.range(of: "/conversations/") else { return nil }
+        let id = String(link[range.upperBound...].prefix { $0 != "?" && $0 != "/" })
+        guard id.hasPrefix("19:") else { return nil }
+        let path = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        return NotificationThread(id: id, url: URL(string: "msteams:/l/chat/\(path)/conversations"))
     }
 
     private static let isoFormatter: ISO8601DateFormatter = {

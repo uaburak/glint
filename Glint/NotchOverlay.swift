@@ -228,6 +228,16 @@ final class NotchOverlay {
         updateExpansion()
     }
 
+    /// Lets go at once, without the linger `holdsOpen` leaves behind: the list below closed because the
+    /// pointer left, and the island goes with it.
+    func releaseNow() {
+        holdsOpen = false
+        heldUntil = .distantPast
+        releaseTimer?.invalidate()
+        releaseTimer = nil
+        updateExpansion()
+    }
+
     private func scheduleRelease() {
         releaseTimer?.invalidate()
         let timer = Timer(timeInterval: Self.releaseDelay + 0.02, repeats: false) { [weak self] _ in
@@ -471,7 +481,7 @@ struct NotchFeatherBlur: NSViewRepresentable {
 /// (the blur, with a saturation boost). Those are AppKit's internal layers (seen on macOS 27), so
 /// they're hidden again after every update in case AppKit rebuilds them, e.g. on an appearance change.
 final class PureBlurView: NSVisualEffectView {
-    static let blurRadius = 12
+    var blurRadius = 12
 
     override func updateLayer() {
         super.updateLayer()
@@ -498,8 +508,8 @@ final class PureBlurView: NSVisualEffectView {
                         sublayer.filters = blurOnly
                     }
                     let radiusPath = "filters.gaussianBlur.inputRadius"
-                    if (sublayer.value(forKeyPath: radiusPath) as? NSNumber)?.intValue != Self.blurRadius {
-                        sublayer.setValue(Self.blurRadius, forKeyPath: radiusPath)
+                    if (sublayer.value(forKeyPath: radiusPath) as? NSNumber)?.intValue != blurRadius {
+                        sublayer.setValue(blurRadius, forKeyPath: radiusPath)
                     }
                 } else if !sublayer.isHidden {
                     sublayer.isHidden = true

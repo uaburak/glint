@@ -1,6 +1,16 @@
 import Foundation
 import SQLite3
 
+/// The conversation a notification belongs to: what groups it with the rest of that chat in a stack,
+/// and, where the app can be pointed at a chat, the address that opens it.
+struct NotificationThread: Hashable, Sendable {
+    /// The app's own id for the chat: a WhatsApp JID, a Teams conversation id.
+    let id: String
+    /// Opens the chat in its app. Nil where the app has no such address (a WhatsApp group): then the
+    /// app itself opens.
+    let url: URL?
+}
+
 /// A message an app wrote into its own database, read before macOS has a notification record for it.
 struct InstantMessage: Sendable {
     let bundleID: String
@@ -13,6 +23,8 @@ struct InstantMessage: Sendable {
     /// Unread messages in its chat: zero while the user has that chat open, since WhatsApp reads it
     /// the moment it lands.
     let chatUnread: Int
+    /// The chat it came in.
+    let thread: NotificationThread?
 }
 
 /// Reads new WhatsApp messages from WhatsApp's own database, which it writes the moment a message
@@ -176,7 +188,7 @@ final class WhatsAppMessageSource {
             SELECT m.Z_PK, m.ZTEXT, m.ZMESSAGEDATE, m.ZMESSAGETYPE, m.ZPUSHNAME, m.ZGROUPEVENTTYPE,
                    s.ZPARTNERNAME, s.ZSESSIONTYPE, s.ZUNREADCOUNT,
                    g.ZCONTACTNAME, g.ZFIRSTNAME, m.ZGROUPMEMBER,
-                   p.ZMUTEDUNTIL, m.ZCHATSESSION
+                   p.ZMUTEDUNTIL, m.ZCHATSESSION, s.ZCONTACTJID, s.ZCONTACTIDENTIFIER
             FROM ZWAMESSAGE m
             LEFT JOIN ZWACHATSESSION s ON s.Z_PK = m.ZCHATSESSION
             LEFT JOIN ZWAGROUPMEMBER g ON g.Z_PK = m.ZGROUPMEMBER
@@ -319,8 +331,21 @@ final class WhatsAppMessageSource {
             title: chatName,
             body: body,
             date: date,
-            chatUnread: Int(sqlite3_column_int(statement, 8))
+            chatUnread: Int(sqlite3_column_int(statement, 8)),
+            thread: text(14).map { NotificationThread(id: $0, url: chatURL(jid: $0, identifier: text(15), sessionType: sessionType)) }
         ))
+    }
+
+    /// Opens a one-to-one chat: WhatsApp's address takes a phone number. A chat is filed under its
+    /// number or under a hidden id ("…@lid"), and the other one is kept as its contact identifier, so
+    /// the number is in one of the two. A group has no address; WhatsApp itself opens for those.
+    private static func chatURL(jid: String, identifier: String?, sessionType: Int32) -> URL? {
+        guard sessionType == 0,
+              let phoneJID = [jid, identifier].compactMap({ $0 }).first(where: { $0.hasSuffix("@s.whatsapp.net") })
+        else { return nil }
+        let number = phoneJID.prefix { $0 != "@" && $0 != ":" }.filter(\.isNumber)
+        guard !number.isEmpty else { return nil }
+        return URL(string: "whatsapp://send?phone=\(number)")
     }
 
     /// Looks again shortly: the rest of a message lands within moments of the row itself.
