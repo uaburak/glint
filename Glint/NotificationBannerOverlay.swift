@@ -7,9 +7,9 @@ import SwiftUI
 /// and reveals its close and "Aç" buttons. The first click on a stack of several notifications spreads
 /// them out, a click on a single card opens the app.
 ///
-/// On a Mac with a notch, notifications also wait in the notch whatever the position: the notch grows
-/// with the app's icon while a banner is up (`NotchOverlay`), and hovering it opens every waiting
-/// notification below it, grouped by app. Under the notch, banners grow out of it.
+/// On a Mac with a notch, notifications also wait below the notch whatever the position: resting the
+/// pointer on the notch opens every waiting notification below it, grouped by app. Nothing else is
+/// drawn there; the card is the only banner. Under the notch, banners grow out of it.
 @MainActor
 final class NotificationBannerOverlay {
     static let shared = NotificationBannerOverlay()
@@ -19,11 +19,12 @@ final class NotificationBannerOverlay {
     static let margin: CGFloat = 14
     /// How long a new notification's banner stays up.
     static let popDuration: TimeInterval = 6
-    /// Distance from the cards to the screen's edge (below the menu bar, above the Dock).
-    static let screenInset: CGFloat = 10
+    /// Distance from the cards to the screen's edge (below the menu bar, above the Dock); macOS 27's
+    /// own banners sit 16 pt from the right edge and 16 pt below the menu bar.
+    static let screenInset: CGFloat = 16
     /// Space between the notch and the banners below it.
     static let notchGap: CGFloat = 6
-    /// Notifications nobody opened wait in the notch; they go once read, or after this long.
+    /// Notifications nobody opened wait below the notch; they go once read, or after this long.
     private static let waitingLifetime: TimeInterval = 30 * 60
     /// How long banners stay after the pointer leaves them.
     private static let lingerAfterHover: TimeInterval = 2.5
@@ -34,11 +35,9 @@ final class NotificationBannerOverlay {
     static let arrival = Animation.spring(response: 0.42, dampingFraction: 0.86)
 
     private let model = BannerStackModel()
-    private lazy var notch: NotchOverlay = {
-        let notch = NotchOverlay(model: model)
+    private lazy var notch: NotchHoverTracker = {
+        let notch = NotchHoverTracker()
         notch.onHoverChanged = { [weak self] hovering in self?.notchHoverChanged(hovering) }
-        notch.onClearAll = { [weak self] in self?.dismiss() }
-        notch.onOpenSettings = { [weak self] in self?.onOpenSettings?() }
         return notch
     }()
     /// Banners popping up at the chosen position (under the notch, it also shows the waiting list).
@@ -52,12 +51,9 @@ final class NotificationBannerOverlay {
     private var notchHovered = false
     private var closeNotchListWork: DispatchWorkItem?
 
-    /// Opens Glint's settings, from the island's settings button.
-    var onOpenSettings: (() -> Void)?
-
     private init() {
         // Banners on screen while a display is plugged in or unplugged: macOS moves their windows,
-        // so they're fitted to their corner (or to the notch) again. The island looks after itself.
+        // so they're fitted to their corner (or to the notch) again.
         NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
         ) { [weak self] _ in
@@ -93,11 +89,10 @@ final class NotificationBannerOverlay {
     /// Shows a notification: on top of its app's stack if that app's banner is up, as a new stack
     /// otherwise. Returns the banner's id, so what it says can be filled in later.
     ///
-    /// With `popping` off it's the first half of a notification whose message macOS hasn't written
-    /// yet: nothing pops up, it goes into the notch and the island grows for a moment to announce it.
-    /// `fillIn` then brings the banner out with the message.
+    /// With `popping` off nothing pops up: the notification waits below the notch until it's read or
+    /// `fillIn` brings it out with its message. With `waits` off it goes with its banner, notch or not.
     @discardableResult
-    func show(app: WatchedApp, title: String, body: String, position: BannerPosition, date: Date = Date(), popping: Bool = true) -> UUID {
+    func show(app: WatchedApp, title: String, body: String, position: BannerPosition, date: Date = Date(), popping: Bool = true, waits: Bool = true) -> UUID {
         if position != self.position {
             self.position = position
             arrangePanels()
@@ -105,8 +100,8 @@ final class NotificationBannerOverlay {
 
         let now = Date()
         let item = BannerStackModel.Item(title: title, body: body, date: date)
-        // With a notch, notifications nobody opened wait in it; without one they go with their banner.
-        let lifetime = Notch.current != nil ? Self.waitingLifetime : Self.popDuration
+        // With a notch, notifications nobody opened wait below it; without one they go with their banner.
+        let lifetime = waits && Notch.current != nil ? Self.waitingLifetime : Self.popDuration
         withAnimation(Self.arrival) {
             if !notchHovered {
                 model.showsAll = false
@@ -120,11 +115,6 @@ final class NotificationBannerOverlay {
         }
         startTimer()
         syncNotch()
-        if !popping {
-            // Nothing pops up, so the island announces it by itself: long enough to be noticed, short
-            // enough not to sit open while the message is still being written.
-            notch.holdOpenBriefly(4)
-        }
         presentPanels()
         return item.id
     }
@@ -167,8 +157,7 @@ final class NotificationBannerOverlay {
         return true
     }
 
-    /// Follows the settings: where banners pop up and whether they're on. With a notch the island sits
-    /// on it whenever banners are on, even before any notification.
+    /// Follows the settings: where banners pop up and whether they're on.
     func configure(position: BannerPosition, enabled: Bool) {
         let hasNotch = Notch.current != nil
         guard position != self.position || enabled != bannersEnabled || hasNotch != notchAvailable else { return }
@@ -317,16 +306,9 @@ final class NotificationBannerOverlay {
 
     // MARK: - Notch
 
-    /// The island sits on the notch while banners are on, whatever their position, and grows while a
-    /// banner is up or the waiting list is open.
+    /// The notch is watched for the pointer while notifications wait below it, whatever the position.
     private func syncNotch() {
-        guard Notch.current != nil, bannersEnabled else {
-            notch.holdsOpen = false
-            notch.refresh(showing: false)
-            return
-        }
-        notch.refresh(showing: true)
-        notch.holdsOpen = !model.stacks.isEmpty && (model.showsAll || model.stacks.contains { $0.popsUntil != nil })
+        notch.refresh(tracking: bannersEnabled && Notch.current != nil && !model.stacks.isEmpty)
     }
 
     private func notchHoverChanged(_ hovering: Bool) {
@@ -483,8 +465,7 @@ private final class BannerPanel {
         guard !shown.isEmpty else { return }
         let panel = self.panel ?? Self.makePanel()
         self.panel = panel
-        // Under the notch the banners stay above the screen-edge glow, like the notch itself.
-        panel.level = position == .notch ? NotchOverlay.level : .statusBar
+        panel.level = position == .notch ? Self.notchLevel : .statusBar
 
         if hosting == nil {
             let hosting = FirstMouseHostingView(rootView: BannerStackView(
@@ -579,14 +560,8 @@ private final class BannerPanel {
         panel.setFrame(NSRect(x: x, y: y, width: width, height: height), display: true)
     }
 
-private final class BannerPanelWindow: NSPanel {
-    override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { true }
-    override var isKeyWindow: Bool { true }
-    override var isMainWindow: Bool { true }
-    override func resignKey() {}
-    override func resignMain() {}
-}
+    /// Under the notch the banners stay above the screen-edge glow and the alarm, which they drop into.
+    private static let notchLevel = NSWindow.Level(rawValue: NSWindow.Level.screenSaver.rawValue + 1)
 
     private static func makePanel() -> NSPanel {
         let panel = BannerPanelWindow(
@@ -599,13 +574,24 @@ private final class BannerPanelWindow: NSPanel {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        // The glass draws no shadow of its own here, and the cards carry theirs; a window shadow
-        // would outline the transparent margin instead.
+        // Liquid Glass draws the cards' edges and depth itself; a window shadow would outline the
+        // transparent margin instead.
         panel.hasShadow = false
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
         return panel
     }
+}
+
+/// A panel that always reports itself key and main. Glint never activates, and Liquid Glass in a
+/// window macOS thinks is inactive draws flat and dark, without its rim.
+private final class BannerPanelWindow: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
+    override var isKeyWindow: Bool { true }
+    override var isMainWindow: Bool { true }
+    override func resignKey() {}
+    override func resignMain() {}
 }
 
 // MARK: - Model
@@ -645,8 +631,6 @@ final class BannerStackModel {
         var expiresAt: Date
         /// Until when the stack's banner is up after a new notification.
         var popsUntil: Date?
-        /// Notifications that came in for the stack; the notch island's badge.
-        var received = 1
 
         var id: String { app.id }
     }
@@ -667,7 +651,6 @@ final class BannerStackModel {
     func push(_ item: Item, from app: WatchedApp, expiresAt: Date, popsUntil: Date?, maxStacks: Int = 4) {
         if let index = stacks.firstIndex(where: { $0.id == app.id }) {
             var stack = stacks.remove(at: index)
-            stack.received += 1
             // The newest on top and the rest slide down; a stack isn't capped, the panel scrolls.
             stack.items.insert(item, at: 0)
             stack.expiresAt = expiresAt
@@ -709,9 +692,10 @@ struct BannerStackView: View {
         let stacks = position.isTop ? shown : Array(shown.reversed())
         let edge: UnitPoint = position.isTop ? .top : .bottom
         // Banners that don't fit on the screen scroll; the margins are inside, so the close buttons
-        // overhanging the cards aren't cut off.
+        // overhanging the cards aren't cut off. No GlassEffectContainer: inside one, overlapping glass
+        // melts into a single shape, and the cards peeking out behind a stack's top card have to stay
+        // cards of their own.
         ScrollView(.vertical) {
-            GlassEffectContainer(spacing: 10) {
             VStack(spacing: 10) {
                 ForEach(stacks) { stack in
                     BannerStackCards(
@@ -730,7 +714,6 @@ struct BannerStackView: View {
             .padding(NotificationBannerOverlay.margin)
             .frame(width: NotificationBannerOverlay.cardWidth + 2 * NotificationBannerOverlay.margin)
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { onContentHeight($0) }
-            }
         }
         // The panel never becomes key, and glass drawn in a window macOS thinks is inactive comes out
         // flat and dark; this is the same trick the notch's blur uses.
@@ -871,8 +854,17 @@ private struct BannerStackCards: View {
     }
 }
 
+/// One notification, laid out the way macOS 27 lays out its own banners. The numbers were read off the
+/// system's banners (their Accessibility frames and pixels at 2x): 344 pt wide, a continuous 20 pt
+/// corner, a 39 pt icon 9.5 pt from the left edge and centred, text from 58 pt with 12 pt to spare on
+/// the right, 12 pt above and 11.5 pt below it, never shorter than 58 pt. The title is 13 pt semibold
+/// on up to two lines, the message 13 pt in the primary colour on up to four, 1 pt below it.
 struct BannerCardView: View {
-    static let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
+    static let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
+    private static let iconSize: CGFloat = 39
+    private static let iconInset: CGFloat = 9.5
+    private static let textInset: CGFloat = iconInset + iconSize + iconInset
+    private static let minHeight: CGFloat = iconSize + 2 * iconInset
 
     let app: WatchedApp
     let title: String
@@ -908,46 +900,48 @@ struct BannerCardView: View {
     }
 
     var body: some View {
-        HStack(alignment: .center, spacing: 10) {
-            icon
+        VStack(alignment: .leading, spacing: 1) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .lineHeight(Self.lineHeight(for: title, weight: .semibold))
+                    .lineLimit(2)
 
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(title)
-                        .font(.system(size: 13, weight: .semibold))
+                if isExpandedMode, let timeString = relativeTimeString {
+                    Spacer(minLength: 6)
+                    Text(timeString)
+                        .font(.system(size: 11, weight: .regular))
+                        .foregroundStyle(.secondary.opacity(0.85))
                         .lineLimit(1)
-                        .foregroundStyle(.primary)
-
-                    if isExpandedMode, let timeString = relativeTimeString {
-                        Spacer(minLength: 6)
-                        Text(timeString)
-                            .font(.system(size: 11, weight: .regular))
-                            .foregroundStyle(.secondary.opacity(0.85))
-                            .lineLimit(1)
-                            .opacity(hovered ? 0 : 1)
-                    }
-                }
-
-                if !message.isEmpty {
-                    Text(message)
-                        .font(.system(size: 13))
-                        .lineLimit(2)
-                        .foregroundStyle(.secondary)
+                        .opacity(hovered ? 0 : 1)
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            // The "Aç" button covers the text's end, which fades out instead of making room: the
-            // card never reflows.
-            .mask(textMask)
+
+            if !message.isEmpty {
+                Text(message)
+                    .font(.system(size: 13))
+                    .lineHeight(Self.lineHeight(for: message, weight: .regular))
+                    .lineLimit(4)
+            }
         }
-        .padding(.leading, 12)
-        .padding(.trailing, 14)
-        .padding(.vertical, 11)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        // The "Aç" button covers the text's end, which fades out instead of making room: the card
+        // never reflows.
+        .mask(textMask)
+        .padding(.leading, Self.textInset)
+        .padding(.trailing, 12)
+        .padding(.top, 12)
+        .padding(.bottom, 11.5)
         .frame(width: NotificationBannerOverlay.cardWidth, alignment: .leading)
-        .frame(minHeight: 62)
-        .glassEffect(.clear.interactive(), in: .rect(cornerRadius: 18.0))
-        .contentShape(.rect(cornerRadius: 18.0))
-        .environment(\.controlActiveState, .key)
+        .frame(minHeight: Self.minHeight, alignment: .top)
+        // The text starts at the top; the icon stays centred however many lines there are.
+        .overlay(alignment: .leading) {
+            icon.padding(.leading, Self.iconInset)
+        }
+        // Apple: the regular variant is the default and stays legible; clear needs a dimming layer.
+        // Interactive, as for any custom control that reacts to the pointer.
+        .glassEffect(.regular.interactive(), in: Self.shape)
+        .contentShape(Self.shape)
         .onTapGesture(perform: onTap)
         .overlay(alignment: .trailing) {
             if hovered {
@@ -967,6 +961,16 @@ struct BannerCardView: View {
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) { hovered = hovering }
         }
+    }
+
+    /// macOS's banners give a text 18 pt lines instead of 16 when one of its glyphs reaches below the
+    /// font's descent: a cedilla does (ç, ş), ü, é or ı don't. It applies to every line of that text,
+    /// and to the title and the message separately. SwiftUI's own line heights don't do this.
+    private static func lineHeight(for text: String, weight: NSFont.Weight) -> AttributedString.LineHeight? {
+        let font = NSFont.systemFont(ofSize: 13, weight: weight)
+        let line = CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: [.font: font]))
+        let bounds = CTLineGetBoundsWithOptions(line, .useGlyphPathBounds)
+        return -bounds.minY > -font.descender ? .exact(points: 18) : nil
     }
 
     private var relativeTimeString: String? {
@@ -1004,14 +1008,15 @@ struct BannerCardView: View {
             Image(nsImage: image)
                 .resizable()
                 .interpolation(.high)
-                .frame(width: 38, height: 38)
+                .frame(width: Self.iconSize, height: Self.iconSize)
         } else {
+            // The size of an app icon's artwork inside its 39 pt frame.
             Image(systemName: app.fallbackIconName)
                 .font(.system(size: 17, weight: .semibold))
                 .foregroundStyle(.white)
-                .frame(width: 32, height: 32)
+                .frame(width: 31, height: 31)
                 .background(Color(hex: app.defaultColorHex), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .frame(width: 38, height: 38)
+                .frame(width: Self.iconSize, height: Self.iconSize)
         }
     }
 
@@ -1026,22 +1031,6 @@ struct BannerCardView: View {
         .foregroundStyle(.secondary)
         .glassEffect(in: Circle())
         .help("Kapat")
-    }
-}
-
-/// The material macOS's own notification banners are built on, always drawn in its active state:
-/// the panel never becomes key, and an inactive material comes out flat and grey.
-private struct CardBackdrop: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let view = NSVisualEffectView()
-        view.material = .hudWindow
-        view.blendingMode = .behindWindow
-        view.state = .active
-        return view
-    }
-
-    func updateNSView(_ view: NSVisualEffectView, context: Context) {
-        view.state = .active
     }
 }
 

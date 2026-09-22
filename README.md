@@ -14,7 +14,7 @@ Glint yalnızca mesajlaşma uygulamalarıyla sınırlı değildir: Dock simgesin
 | Parça | Yöntem |
 |---|---|
 | Okunmamış sayısı | **Sistem SQLite Veritabanı:** Tam Disk Erişimi (FDA) verildiğinde doğrudan macOS'un `group.com.apple.usernoted/db2/db` veritabanı olay tabanlı (WAL izleme ile sıfır gecikmeli) okunur. **Dock / LaunchServices Fallback:** İzin verilmediğinde veya ek teyit olarak LaunchServices ve Erişilebilirlik üzerinden Dock taranır. |
-| Yeni bildirim | İki aşamalı: Dock simgesindeki sayı artar artmaz çentikteki ada büyür ve ekran kenarı ışıldar; mesajın kimden geldiği ve içeriği okunabildiğinde yüzen bildirim çıkar. macOS bildirim kaydını mesaj akışı durduktan ~5 sn sonra yazdığı için (arka arkaya mesajlarda 20 sn'yi bulabilir) ilk haber rozetten verilir. Uygulama yeni açıldıysa ilk 20 saniyedeki artışlar eski bildirimlerin yüklenmesi sayılır ve bildirilmez. |
+| Yeni bildirim | Dock simgesindeki sayı artınca Glint bildirimin kaydını bekler; mesajın kimden geldiği ve içeriği okunabildiğinde ekran kenarı ışıldar ve yüzen bildirim çıkar (WhatsApp ve Teams'te mesaj kendi veritabanlarından anında okunur). macOS bildirim kaydını mesaj akışı durduktan ~5 sn sonra yazar (arka arkaya mesajlarda 20 sn'yi bulabilir); kayıt okunamıyorsa bildirim rozetten verilir. Uygulama yeni açıldıysa ilk 20 saniyedeki artışlar eski bildirimlerin yüklenmesi sayılır ve bildirilmez. |
 | Bildirilmeyenler | Uygulamayı o an kullanırken gelen mesajlar ve ekranda açık olan sohbetten gelenler. Açık sohbet, uygulamanın pencere başlığındaki kişi adından anlaşılır (Erişilebilirlik izni gerekir). |
 | "Uzakta mıyım?" | Klavye/fare hareketsizlik süresi (varsayılan 2 dk) veya kilitli ekran. Uzaktayken çalan alarmdan sonra klavyeye ya da fareye dokunana kadar uzakta sayılırsın. |
 | Sessiz mod | macOS Odak durumu (`~/Library/DoNotDisturb/DB/Assertions.json`, Tam Disk Erişimi gerekir) veya ayarlanan sessiz saatler. |
@@ -115,7 +115,7 @@ Bir kerelik hazırlık:
 
 ## Çentik
 
-Çentikli MacBook'larda yüzen bildirimler açıkken çentik Glint'in adasına dönüşür. Bildirim gelince iki yana genişler: solda uygulamanın simgesi ve gelen bildirim sayısını gösteren rozet, sağda tüm bildirimleri temizleyen çarpı. Çentiğin üzerine gelince bekleyen bildirimler uygulamaya göre gruplanmış olarak açılır.
+Tek banner yüzen karttır; çentiğe bir şey çizilmez. Kartın konumu **Çentik** seçiliyse kart çentiğin hemen altından iner. Çentikli MacBook'larda okunmayan bildirimler kart kaybolduktan sonra da çentiğin altında bekler: fareyi çentiğin üzerine getirince uygulamaya göre gruplanmış olarak açılırlar. **Yalnızca çentik** stilinde kart hiç çıkmaz, bildirimler yalnızca orada bekler.
 
 ## Uygulamaların kendi bildirimlerini susturmak (bir kerelik)
 
