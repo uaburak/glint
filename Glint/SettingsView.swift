@@ -2,7 +2,7 @@ import SwiftUI
 
 /// The pages of the settings window, in sidebar order.
 enum SettingsPage: String, CaseIterable, Identifiable {
-    case about, apps, notifications, alarm, quiet, appearance, detection, general
+    case about, apps, notifications, alarm, quiet, appearance, detection, general, test
 
     var id: String { rawValue }
 
@@ -16,6 +16,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .appearance: "Görünüm Ayarları"
         case .detection: "Algılama"
         case .general: "Genel Ayarlar"
+        case .test: "Test"
         }
     }
 
@@ -29,6 +30,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .appearance: "paintpalette.fill"
         case .detection: "person.fill.viewfinder"
         case .general: "gearshape.fill"
+        case .test: "testtube.2"
         }
     }
 
@@ -43,6 +45,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .appearance: .pink
         case .detection: .teal
         case .general: .gray
+        case .test: .purple
         }
     }
 }
@@ -110,6 +113,7 @@ struct SettingsView: View {
                 }
                 Section {
                     row(.general)
+                    row(.test)
                 }
             }
             // Like System Settings, the sidebar is always there.
@@ -170,6 +174,7 @@ struct SettingsView: View {
         case .appearance: AppearancePage(controller: controller)
         case .detection: DetectionPage(controller: controller)
         case .general: GeneralPage(controller: controller)
+        case .test: TestPage(controller: controller)
         }
     }
 
