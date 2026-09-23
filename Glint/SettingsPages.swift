@@ -130,7 +130,7 @@ struct GeneralPage: View {
                         .foregroundStyle(.orange)
                 }
                 Toggle("Mac'in kendiliğinden uyumasını engelle", isOn: $preventSleep)
-                Hint("İzleme açıkken Mac kendiliğinden uyumaz; kapağı kapatınca yine uyur.")
+                Hint("Kapak kapanınca yine uyur.")
             }
 
             Section("İzinler") {
@@ -142,22 +142,22 @@ struct GeneralPage: View {
                         Button("İzin Ver…", action: SystemSettings.requestAccessibility)
                     }
                 }
-                Hint("Dock'taki rozetleri okumak için gerekir; bazı uygulamaların rozeti yalnızca orada görünür.")
+                Hint("Dock'taki okunmamış sayılarını görmek için.")
 
-                LabeledContent("Tam Disk Erişimi (SQLite Veritabanı)") {
+                LabeledContent("Tam Disk Erişimi") {
                     if controller.hasFullDiskAccess {
-                        Label("Aktif (Sistem Kökü)", systemImage: "checkmark.shield.fill")
+                        Label("İzin verildi", systemImage: "checkmark.circle.fill")
                             .foregroundStyle(.green)
                     } else {
                         Button("Ayarları Aç…", action: SystemSettings.openFullDiskAccess)
                     }
                 }
-                Hint("Bildirim metinlerini okumak ve mesajları anında yakalamak için gerekir. İzin yoksa Glint rozetlerden çalışır.")
+                Hint("Mesaj metinlerini ve Odak durumunu okumak için.")
             }
 
             Section("Kısayollar") {
                 ForEach(ShortcutAction.allCases) { ShortcutRecorder(action: $0) }
-                Hint("Hangi uygulama öndeyse çalışır. Atamak için düğmeye tıklayıp tuş birleşimine bas (⌘, ⌥ ya da ⌃ ile); Esc vazgeçer.")
+                Hint("Düğmeye tıklayıp tuş birleşimine bas; Esc vazgeçer.")
             }
 
             UpdateSection(updater: AppUpdater.shared)
@@ -208,7 +208,6 @@ private struct UpdateSection: View {
                 }
             }
 
-            Hint("Güncellemeler geliştirici anahtarıyla imzalanır; imzası tutmayan bir paket indirilse bile kurulmaz.")
         }
     }
 
@@ -234,7 +233,7 @@ struct DetectionPage: View {
                     }
                 }
                 Toggle("Ekran kilitliyse anında uzakta say", isOn: $lockCountsAsAway)
-                Hint("Klavye ve fareye bu süre boyunca dokunmazsan uzakta sayılırsın. Bilgisayar başındayken alarm çalmaz, yalnızca ışıma olur.")
+                Hint("Alarm yalnızca sen uzaktayken çalar.")
             }
 
             Section {
@@ -267,13 +266,12 @@ struct AlarmPage: View {
         Form {
             Section("Alarm Çalacak Uygulamalar") {
                 if apps.isEmpty {
-                    Text("Uygulamalar sayfasından izlenecek uygulama ekleyebilirsin.")
+                    Text("Önce Uygulamalar sayfasından uygulama ekle.")
                         .foregroundStyle(.secondary)
                 }
                 ForEach(apps) { app in
                     AlarmAppRow(app: app, controller: controller)
                 }
-                Hint("Uzaktayken yalnızca yukarıda açık olan uygulamalar için alarm çalar.")
             }
 
             Section("Ekran Efekti") {
@@ -299,16 +297,13 @@ struct AlarmPage: View {
                         Text("\(Int($0)) dakikada bir").tag($0)
                     }
                 }
-                Hint("Bildirim okunmadıkça alarm bu aralıkla tekrarlar; klavyeye ya da fareye dokununca durur.")
+                Hint("Klavyeye ya da fareye dokununca durur.")
             }
 
             Section("Ses") {
                 SoundPicker(title: "Alarm sesi", selection: $sound, preview: preview)
                 VolumeRow(title: "Ses seviyesi", value: $volume, onRelease: preview)
                 Toggle("Mac sessizde olsa bile alarmı duyur", isOn: $overrideSystemVolume)
-                Hint(overrideSystemVolume
-                     ? "Mac sessizde olsa bile alarm bu seviyede çalar; bitince ses eski haline döner."
-                     : "Alarm, Mac'in mevcut ses seviyesine bağlı kalır.")
             }
 
             Section {

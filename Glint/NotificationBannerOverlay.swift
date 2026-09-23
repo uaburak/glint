@@ -3,7 +3,7 @@ import Observation
 import SwiftUI
 
 /// Notification banners in the style of macOS's own: glass cards, one stack per app. A new
-/// notification's banner pops up at the chosen position for a few seconds; hovering keeps it there
+/// notification's banner pops up at its app's position for a few seconds; hovering keeps it there
 /// and reveals its close and "Aç" buttons. The first click on a stack of several notifications spreads
 /// them out, a click on a single card opens the app.
 ///
@@ -17,8 +17,6 @@ final class NotificationBannerOverlay {
     static let cardWidth: CGFloat = 344
     /// Transparent room around the cards for the close button, which overhangs a card's corner.
     static let margin: CGFloat = 14
-    /// How long a new notification's banner stays up.
-    static let popDuration: TimeInterval = 6
     /// Distance from the cards to the screen's edge (below the menu bar, above the Dock); macOS 27's
     /// own banners sit 16 pt from the right edge and 16 pt below the menu bar.
     static let screenInset: CGFloat = 16
@@ -44,12 +42,12 @@ final class NotificationBannerOverlay {
         notch.onOpenSettings = { [weak self] in self?.onOpenSettings?() }
         return notch
     }()
-    /// Banners popping up at the chosen position (under the notch, it also shows the waiting list).
-    private lazy var popPanel = BannerPanel(model: model, handlers: handlers)
-    /// The waiting list under the notch, when banners pop up somewhere else.
-    private lazy var listPanel = BannerPanel(model: model, handlers: handlers)
-    private var position: BannerPosition = .topRight
+    /// A window per position banners pop up at, made when the first one does. Apps can each have
+    /// their own position. The one under the notch also shows the waiting list.
+    private var panels: [BannerPosition: BannerPanel] = [:]
     private var bannersEnabled = true
+    /// How long a new notification's banner stays up; nil = until it's closed or read.
+    private var popDuration: TimeInterval? = 6
     /// Whether notifications also go into the notch (and the island sits on it), or only pop up.
     private var notchEnabled = true
     private var notchAvailable = false
@@ -67,8 +65,7 @@ final class NotificationBannerOverlay {
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
-                self?.popPanel.scheduleFrameUpdate()
-                self?.listPanel.scheduleFrameUpdate()
+                self?.scheduleFrameUpdates()
             }
         }
     }
@@ -87,14 +84,32 @@ final class NotificationBannerOverlay {
         )
     }
 
-    /// Where banners pop up: the chosen position, or the top centre when the notch position has no notch.
-    private var popPosition: BannerPosition {
-        position == .notch && Notch.current == nil ? .topCenter : position
+    /// Where a banner pops up. On a Mac with a notch the top centre is the notch: the card grows out
+    /// of it, in the same window as the waiting list.
+    private static func popPosition(_ position: BannerPosition) -> BannerPosition {
+        switch position {
+        case .topCenter, .notch: Notch.current != nil ? .notch : .topCenter
+        default: position
+        }
     }
 
-    /// Whether the waiting list needs its own panel under the notch.
-    private var listNeedsOwnPanel: Bool {
-        Notch.current != nil && popPosition != .notch
+    /// When a banner popping up now goes down: never, for banners that stay until they're closed.
+    private func popEnd(from now: Date) -> Date {
+        popDuration.map(now.addingTimeInterval) ?? .distantFuture
+    }
+
+    private func panel(at position: BannerPosition) -> BannerPanel {
+        if let panel = panels[position] { return panel }
+        let panel = BannerPanel(model: model, handlers: handlers)
+        panel.configure(position: position, shelf: position == .notch ? .poppingAndList : .popping)
+        panels[position] = panel
+        return panel
+    }
+
+    private func scheduleFrameUpdates(after delay: TimeInterval = 0) {
+        for panel in panels.values {
+            panel.scheduleFrameUpdate(after: delay)
+        }
     }
 
     /// Shows a notification: on top of its app's stack if that app's banner is up, as a new stack
@@ -106,15 +121,11 @@ final class NotificationBannerOverlay {
     /// notch or not.
     @discardableResult
     func show(app: WatchedApp, title: String, body: String, position: BannerPosition, date: Date = Date(), thread: NotificationThread? = nil, popping: Bool = true, waits: Bool = true) -> UUID {
-        if position != self.position {
-            self.position = position
-            arrangePanels()
-        }
-
         let now = Date()
         let item = BannerStackModel.Item(title: title, body: body, date: date, thread: thread)
         // With a notch, notifications nobody opened wait in it; without one they go with their banner.
-        let lifetime = waits && Notch.current != nil ? Self.waitingLifetime : Self.popDuration
+        let popsUntil = popping ? popEnd(from: now) : nil
+        let lifetime = waits && Notch.current != nil ? Self.waitingLifetime : (popDuration ?? Self.waitingLifetime)
         withAnimation(Self.arrival) {
             if !notchHovered {
                 model.showsAll = false
@@ -122,8 +133,9 @@ final class NotificationBannerOverlay {
             model.push(
                 item,
                 from: app,
-                expiresAt: now.addingTimeInterval(lifetime),
-                popsUntil: popping ? now.addingTimeInterval(Self.popDuration) : nil
+                at: Self.popPosition(position),
+                expiresAt: max(now.addingTimeInterval(lifetime), popsUntil ?? now),
+                popsUntil: popsUntil
             )
         }
         startTimer()
@@ -134,6 +146,8 @@ final class NotificationBannerOverlay {
             notch.holdOpenBriefly(4)
         }
         presentPanels()
+        // The app's banners may have moved to another position, leaving a window with nothing in it.
+        afterChange()
         return item.id
     }
 
@@ -151,15 +165,15 @@ final class NotificationBannerOverlay {
             )
             // The message is what the user was waiting to see, and macOS can be slow to write it:
             // the banner gets its full time on screen again, even if the count-only one had gone.
-            model.stacks[stackIndex].popsUntil = now.addingTimeInterval(Self.popDuration)
-            let lifetime = Notch.current != nil ? Self.waitingLifetime : Self.popDuration
-            model.stacks[stackIndex].expiresAt = max(model.stacks[stackIndex].expiresAt, now.addingTimeInterval(lifetime))
+            let popsUntil = popEnd(from: now)
+            model.stacks[stackIndex].popsUntil = popsUntil
+            let lifetime = Notch.current != nil ? Self.waitingLifetime : (popDuration ?? Self.waitingLifetime)
+            model.stacks[stackIndex].expiresAt = max(model.stacks[stackIndex].expiresAt, now.addingTimeInterval(lifetime), popsUntil)
         }
         startTimer()
         syncNotch()
         presentPanels()
-        popPanel.scheduleFrameUpdate()
-        listPanel.scheduleFrameUpdate()
+        scheduleFrameUpdates()
     }
 
     /// Removes an app's notifications, e.g. once they've been read in the app.
@@ -175,19 +189,20 @@ final class NotificationBannerOverlay {
         return true
     }
 
-    /// Follows the settings: where banners pop up, whether they're on, and whether notifications go into
-    /// the notch too. With a notch the island sits on it whenever that's on, even before any notification.
-    func configure(position: BannerPosition, enabled: Bool, notch notchEnabled: Bool = true) {
+    /// Follows the settings: whether banners are on, how long they stay up, and whether notifications
+    /// go into the notch too. With a notch the island sits on it whenever that's on, even before any
+    /// notification. Where a banner pops up comes with each one, from its app's settings.
+    func configure(enabled: Bool, notch notchEnabled: Bool = true, popDuration: TimeInterval? = 6, notchSettings: NotchSettings = NotchSettings()) {
+        self.popDuration = popDuration
+        notch.settings = notchSettings
         let hasNotch = Notch.current != nil
-        guard position != self.position || enabled != bannersEnabled || notchEnabled != self.notchEnabled || hasNotch != notchAvailable else { return }
+        guard enabled != bannersEnabled || notchEnabled != self.notchEnabled || hasNotch != notchAvailable else { return }
         self.notchEnabled = notchEnabled
         if !enabled, bannersEnabled {
             dismiss(animated: false)
         }
-        self.position = position
         bannersEnabled = enabled
         notchAvailable = hasNotch
-        arrangePanels()
         syncNotch()
     }
 
@@ -206,18 +221,15 @@ final class NotificationBannerOverlay {
 
     // MARK: - Panels
 
-    private func arrangePanels() {
-        popPanel.configure(position: popPosition, shelf: popPosition == .notch ? .poppingAndList : .popping)
-        listPanel.configure(position: .notch, shelf: .list)
-        if !listNeedsOwnPanel {
-            listPanel.hide()
-        }
-    }
-
+    /// Brings up the windows with something to show: each position with a banner up, and the notch's
+    /// for its waiting list.
     private func presentPanels() {
-        popPanel.present()
-        if listNeedsOwnPanel {
-            listPanel.present()
+        var positions = Set(model.stacks.map(\.position))
+        if Notch.current != nil {
+            positions.insert(.notch)
+        }
+        for position in positions {
+            panel(at: position).present()
         }
     }
 
@@ -230,8 +242,9 @@ final class NotificationBannerOverlay {
                 if self.model.stacks.isEmpty {
                     self.allRemoved()
                 } else {
-                    self.popPanel.hideIfEmpty()
-                    self.listPanel.hideIfEmpty()
+                    for panel in self.panels.values {
+                        panel.hideIfEmpty()
+                    }
                 }
             }
         }
@@ -244,8 +257,9 @@ final class NotificationBannerOverlay {
         model.hovered = false
         model.showsAll = false
         notchHovered = false
-        popPanel.hide()
-        listPanel.hide()
+        for panel in panels.values {
+            panel.hide()
+        }
         syncNotch()
     }
 
@@ -263,8 +277,7 @@ final class NotificationBannerOverlay {
                     model.stacks[index].expandedChats = [only.id]
                 }
             }
-            popPanel.scheduleFrameUpdate()
-            listPanel.scheduleFrameUpdate()
+            scheduleFrameUpdates()
         } else {
             open(stack)
         }
@@ -299,8 +312,7 @@ final class NotificationBannerOverlay {
         withAnimation(Stacking.drop) {
             _ = model.stacks[index].expandedChats.insert(chatID)
         }
-        popPanel.scheduleFrameUpdate()
-        listPanel.scheduleFrameUpdate()
+        scheduleFrameUpdates()
     }
 
     private func collapseChat(stackID: String, chatID: String) {
@@ -315,9 +327,7 @@ final class NotificationBannerOverlay {
         withAnimation(Stacking.drop) {
             _ = model.stacks[index].expandedChats.remove(chatID)
         }
-        let fold = Stacking.foldDuration(cards: cards)
-        popPanel.scheduleFrameUpdate(after: fold)
-        listPanel.scheduleFrameUpdate(after: fold)
+        scheduleFrameUpdates(after: Stacking.foldDuration(cards: cards))
     }
 
     private func removeItem(stackID: String, itemID: UUID) {
@@ -361,9 +371,7 @@ final class NotificationBannerOverlay {
             model.stacks[index].expandedChats = []
         }
         // The panel shrinks once the cards have folded back; any sooner would cut them off on their way.
-        let fold = Stacking.foldDuration(cards: max(model.stacks[index].chats.count, model.stacks[index].items.count))
-        popPanel.scheduleFrameUpdate(after: fold)
-        listPanel.scheduleFrameUpdate(after: fold)
+        scheduleFrameUpdates(after: Stacking.foldDuration(cards: max(model.stacks[index].chats.count, model.stacks[index].items.count)))
     }
 
     private func hoverChanged(_ hovering: Bool) {
@@ -455,7 +463,7 @@ final class NotificationBannerOverlay {
     private func tick() {
         // Hover-exit isn't reported when the card under the pointer goes away; check the pointer itself.
         let pointer = NSEvent.mouseLocation
-        if model.hovered, !popPanel.contains(pointer), !listPanel.contains(pointer) {
+        if model.hovered, !panels.values.contains(where: { $0.contains(pointer) }) {
             hoverChanged(false)
         }
         guard !model.hovered else { return }
@@ -537,7 +545,7 @@ private final class BannerPanel {
     }
 
     private var shown: [BannerStackModel.Stack] {
-        model.shown(on: shelf)
+        model.shown(on: shelf, at: position)
     }
 
     func contains(_ point: NSPoint) -> Bool {
@@ -696,12 +704,10 @@ private final class BannerPanelWindow: NSPanel {
 final class BannerStackModel {
     /// Which notifications a panel shows.
     enum Shelf: Equatable {
-        /// Banners that are up.
+        /// Banners that are up at the panel's position.
         case popping
-        /// Banners that are up, and every waiting notification while the notch is hovered.
+        /// Banners that are up under the notch, and every waiting notification while it's hovered.
         case poppingAndList
-        /// Every waiting notification while the notch is hovered.
-        case list
     }
 
     struct Item: Identifiable, Equatable {
@@ -736,6 +742,8 @@ final class BannerStackModel {
 
     struct Stack: Identifiable {
         let app: WatchedApp
+        /// Where its banner pops up: its app's position when the newest notification came.
+        var position: BannerPosition
         var items: [Item]
         var expanded = false
         var expiresAt: Date
@@ -769,25 +777,25 @@ final class BannerStackModel {
     /// Whether the notch's waiting list is open.
     var showsAll = false
 
-    func shown(on shelf: Shelf) -> [Stack] {
+    func shown(on shelf: Shelf, at position: BannerPosition) -> [Stack] {
         switch shelf {
-        case .popping: stacks.filter { $0.popsUntil != nil }
-        case .poppingAndList: showsAll ? stacks : stacks.filter { $0.popsUntil != nil }
-        case .list: showsAll ? stacks : []
+        case .popping: stacks.filter { $0.popsUntil != nil && $0.position == position }
+        case .poppingAndList: showsAll ? stacks : stacks.filter { $0.popsUntil != nil && $0.position == position }
         }
     }
 
-    func push(_ item: Item, from app: WatchedApp, expiresAt: Date, popsUntil: Date?, maxStacks: Int = 4) {
+    func push(_ item: Item, from app: WatchedApp, at position: BannerPosition, expiresAt: Date, popsUntil: Date?, maxStacks: Int = 4) {
         if let index = stacks.firstIndex(where: { $0.id == app.id }) {
             var stack = stacks.remove(at: index)
             stack.received += 1
+            stack.position = position
             // The newest on top and the rest slide down; a stack isn't capped, the panel scrolls.
             stack.items.insert(item, at: 0)
             stack.expiresAt = expiresAt
             stack.popsUntil = popsUntil
             stacks.insert(stack, at: 0)
         } else {
-            stacks.insert(Stack(app: app, items: [item], expiresAt: expiresAt, popsUntil: popsUntil), at: 0)
+            stacks.insert(Stack(app: app, position: position, items: [item], expiresAt: expiresAt, popsUntil: popsUntil), at: 0)
             stacks = Array(stacks.prefix(maxStacks))
         }
     }
@@ -823,7 +831,7 @@ struct BannerStackView: View {
 
     var body: some View {
         // The newest stack sits nearest the screen edge (or the notch).
-        let shown = model.shown(on: shelf)
+        let shown = model.shown(on: shelf, at: position)
         let stacks = position.isTop ? shown : Array(shown.reversed())
         let edge: UnitPoint = position.isTop ? .top : .bottom
         // Banners that don't fit on the screen scroll; the margins are inside, so the close buttons
@@ -948,6 +956,9 @@ private struct BannerStackCards: View {
     let stack: BannerStackModel.Stack
     let underNotch: Bool
     let actions: StackActions
+    @AppStorage(Pref.notifyPreview) private var previewName = MessagePreview.full.rawValue
+
+    private var preview: MessagePreview { MessagePreview(rawValue: previewName) ?? .full }
 
     var body: some View {
         let chats = stack.chats
@@ -971,17 +982,18 @@ private struct BannerStackCards: View {
             // The app's own header does for a stack of one chat.
             hasHeader: !only
         ) {
-            StackHeader(title: chat.newest.title, prominent: false, onCollapse: { actions.collapseChat(chat.id) }, onClose: { actions.closeChat(chat.id) })
+            StackHeader(title: preview.title(chat.newest.title, app: stack.app), prominent: false, onCollapse: { actions.collapseChat(chat.id) }, onClose: { actions.closeChat(chat.id) })
         } card: { index, innerBehind in
             let item = items[index]
             BannerCardView(
                 app: stack.app,
-                title: item.title,
-                message: item.body,
+                title: preview.title(item.title, app: stack.app),
+                message: preview.message(item.body),
                 date: item.date,
                 isExpandedMode: appExpanded,
                 reservesTime: stack.items.count > 1,
                 showsContent: !behind && !innerBehind,
+                lineLimits: preview.lineLimits,
                 onTap: { tapped(chat, chatExpanded: chatExpanded) },
                 onOpen: { actions.openChat(chat.id) },
                 onClose: { closed(chat, item: item, chatExpanded: chatExpanded) }
@@ -1215,6 +1227,8 @@ struct BannerCardView: View {
     let reservesTime: Bool
     /// Off for a card waiting behind a stack's top card: its glass edge peeks out, its text doesn't.
     let showsContent: Bool
+    /// Most lines of the title and of the message: fewer for the short content setting.
+    let lineLimits: (title: Int, message: Int)
     let onTap: () -> Void
     let onOpen: () -> Void
     let onClose: () -> Void
@@ -1229,6 +1243,7 @@ struct BannerCardView: View {
         isExpandedMode: Bool = false,
         reservesTime: Bool = false,
         showsContent: Bool = true,
+        lineLimits: (title: Int, message: Int) = (2, 4),
         hovered: Bool = false,
         onTap: @escaping () -> Void,
         onOpen: @escaping () -> Void,
@@ -1241,6 +1256,7 @@ struct BannerCardView: View {
         self.isExpandedMode = isExpandedMode
         self.reservesTime = reservesTime
         self.showsContent = showsContent
+        self.lineLimits = lineLimits
         self.onTap = onTap
         self.onOpen = onOpen
         self.onClose = onClose
@@ -1253,7 +1269,7 @@ struct BannerCardView: View {
                 Text(title)
                     .font(.system(size: 13, weight: .semibold))
                     .lineHeight(Self.lineHeight(for: title, weight: .semibold))
-                    .lineLimit(2)
+                    .lineLimit(lineLimits.title)
 
                 if isExpandedMode || reservesTime, let timeString = relativeTimeString {
                     Spacer(minLength: 6)
@@ -1269,7 +1285,7 @@ struct BannerCardView: View {
                 Text(message)
                     .font(.system(size: 13))
                     .lineHeight(Self.lineHeight(for: message, weight: .regular))
-                    .lineLimit(4)
+                    .lineLimit(lineLimits.message)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

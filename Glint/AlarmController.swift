@@ -227,7 +227,7 @@ final class AlarmController {
         teams.update(enabled: hasFullDiskAccess && teamsWatched && !isPaused)
         teams.check()
         deliveryLog.update(enabled: !isPaused && settings.notifyEnabled && !watched.isEmpty)
-        bannerOverlay.configure(position: settings.notifyBannerPosition, enabled: settings.notifyEnabled && settings.notifyStyle.showsMessage, notch: settings.notifyStyle.showsNotch)
+        bannerOverlay.configure(enabled: settings.notifyEnabled && settings.notifyStyle.showsMessage, notch: settings.notifyStyle.showsNotch, popDuration: settings.notifyBannerDuration, notchSettings: settings.notch)
         updateQuiet(settings: settings)
 
         if hasFullDiskAccess {
@@ -661,7 +661,7 @@ final class AlarmController {
         } else if settings.notifyEnabled, settings.notifyStyle.showsMessage, WatchedAppStore.shared.config(for: app).enabled {
             bannerOverlay.show(
                 app: app, title: title ?? app.name, body: body ?? "",
-                position: settings.notifyBannerPosition, date: delivered, thread: thread,
+                position: bannerPosition(of: app, settings: settings), date: delivered, thread: thread,
                 popping: settings.notifyStyle.showsBanner, waits: settings.notifyStyle.showsNotch
             )
         }
@@ -723,11 +723,17 @@ final class AlarmController {
         guard settings.notifyStyle.showsMessage else { return nil }
         let pops = popsBanner && settings.notifyStyle.showsBanner
         let waits = settings.notifyStyle.showsNotch
+        let position = config.bannerPosition(default: settings.notifyBannerPosition)
         if title != nil || body != nil {
-            return bannerOverlay.show(app: app, title: title ?? app.name, body: body ?? "", position: settings.notifyBannerPosition, date: deliveredDate ?? Date(), thread: thread, popping: pops, waits: waits)
+            return bannerOverlay.show(app: app, title: title ?? app.name, body: body ?? "", position: position, date: deliveredDate ?? Date(), thread: thread, popping: pops, waits: waits)
         } else {
-            return bannerOverlay.show(app: app, title: app.name, body: "\(count) okunmamış bildirim", position: settings.notifyBannerPosition, date: deliveredDate ?? Date(), popping: pops, waits: waits)
+            return bannerOverlay.show(app: app, title: app.name, body: "\(count) okunmamış bildirim", position: position, date: deliveredDate ?? Date(), popping: pops, waits: waits)
         }
+    }
+
+    /// Where the app's cards pop up: its own position, or the one from Görünüm Ayarları.
+    private func bannerPosition(of app: WatchedApp, settings: AppSettings) -> BannerPosition {
+        WatchedAppStore.shared.config(for: app).bannerPosition(default: settings.notifyBannerPosition)
     }
 
     /// Puts the chosen effect on screen.
@@ -840,35 +846,6 @@ final class AlarmController {
         overlay.show(unread: max(unread, 1), appName: name, settings: .load())
     }
 
-    func testBanner(position: BannerPosition? = nil, for app: WatchedApp? = nil) {
-        let testApp = app ?? WatchedApp.listed.first ?? WatchedApp.builtIn[0]
-        let pos = position ?? AppSettings.load().notifyBannerPosition
-        bannerOverlay.show(
-            app: testApp,
-            title: "\(testApp.name) Bildirimi",
-            body: "Bu seçilen konumda (\(pos.title)) örnek bir bildirimdir.",
-            position: pos
-        )
-    }
-
-    /// A banner from the test page, shown the way the settings would show it: at the chosen position,
-    /// in the chosen style. No sound, glow or alarm, so a burst of them can be watched in peace.
-    func showTestBanner(app: WatchedApp, title: String, body: String, thread: NotificationThread? = nil) {
-        let settings = AppSettings.load()
-        guard settings.notifyStyle.showsMessage else { return }
-        bannerOverlay.show(
-            app: app, title: title, body: body,
-            position: settings.notifyBannerPosition, thread: thread,
-            popping: settings.notifyStyle.showsBanner,
-            waits: settings.notifyStyle.showsNotch
-        )
-    }
-
-    /// Takes every banner off the screen, and out of the notch.
-    func clearBanners() {
-        bannerOverlay.dismiss()
-    }
-
     func testNotification(for app: WatchedApp? = nil) {
         var settings = AppSettings.load()
         settings.notifyEnabled = true
@@ -888,13 +865,15 @@ final class AlarmController {
 
         if settings.notifyStyle.showsMessage {
             let testApp = app ?? WatchedApp.listed.first ?? WatchedApp.builtIn[0]
+            // An app's own preview goes where its cards go; the general one to the general position.
+            let position = app.map { bannerPosition(of: $0, settings: settings) } ?? settings.notifyBannerPosition
             bannerOverlay.show(
                 app: testApp,
                 title: "\(testApp.name) Bildirimi",
                 body: settings.notifyStyle.showsBanner
-                    ? "Bu seçilen konumda (\(settings.notifyBannerPosition.title)) örnek bir bildirimdir."
+                    ? "Bu seçilen konumda (\(position.title)) örnek bir bildirimdir."
                     : "Çentikte bekleyen örnek bir bildirimdir.",
-                position: settings.notifyBannerPosition,
+                position: position,
                 popping: settings.notifyStyle.showsBanner,
                 waits: settings.notifyStyle.showsNotch
             )

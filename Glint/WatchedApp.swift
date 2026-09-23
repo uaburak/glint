@@ -3,7 +3,8 @@ import Observation
 import SwiftUI
 
 /// An app whose notifications Glint shows. Apps are recognized by their Dock badge, so any app
-/// that badges its icon works: the well-known messaging apps are built in, others are added.
+/// that badges its icon works. Every app is added by the user; the well-known messaging apps have
+/// a built-in entry, with its own color and icon, that is used when one of them is added.
 struct WatchedApp: Identifiable, Hashable {
     /// Built-in apps use a short id ("teams"), added apps their bundle ID.
     let id: String
@@ -130,14 +131,14 @@ struct WatchedApp: Identifiable, Hashable {
         ),
     ]
 
-    /// Every app that can be watched: all built-in ones (installed or not) plus the added ones.
+    /// Every watched app: the ones the user added.
     @MainActor static var all: [WatchedApp] {
-        builtIn + WatchedAppStore.shared.addedApps
+        WatchedAppStore.shared.addedApps
     }
 
-    /// The apps shown in settings and the menu: installed built-in apps and the added ones, by name.
+    /// The apps shown in settings and the menu, by name.
     @MainActor static var listed: [WatchedApp] {
-        (builtIn.filter(\.isInstalled) + WatchedAppStore.shared.addedApps)
+        all
             .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
@@ -159,18 +160,21 @@ struct WatchedAppConfig: Codable, Equatable {
     var soundID: String?
     /// nil = the default volume from Bildirim Ayarları.
     var volume: Double?
+    /// Where the app's cards pop up; nil = the position from Görünüm Ayarları.
+    var bannerPosition: BannerPosition?
 
-    init(enabled: Bool = true, alarmEnabled: Bool = true, alarmOnlyImportant: Bool = false, glowColorHex: String, soundID: String? = nil, volume: Double? = nil) {
+    init(enabled: Bool = true, alarmEnabled: Bool = true, alarmOnlyImportant: Bool = false, glowColorHex: String, soundID: String? = nil, volume: Double? = nil, bannerPosition: BannerPosition? = nil) {
         self.enabled = enabled
         self.alarmEnabled = alarmEnabled
         self.alarmOnlyImportant = alarmOnlyImportant
         self.glowColorHex = glowColorHex
         self.soundID = soundID
         self.volume = volume
+        self.bannerPosition = bannerPosition
     }
 
     enum CodingKeys: String, CodingKey {
-        case enabled, alarmEnabled, alarmOnlyImportant, glowColorHex, soundID, volume
+        case enabled, alarmEnabled, alarmOnlyImportant, glowColorHex, soundID, volume, bannerPosition
     }
 
     init(from decoder: Decoder) throws {
@@ -181,6 +185,10 @@ struct WatchedAppConfig: Codable, Equatable {
         self.glowColorHex = try container.decode(String.self, forKey: .glowColorHex)
         self.soundID = try container.decodeIfPresent(String.self, forKey: .soundID)
         self.volume = try container.decodeIfPresent(Double.self, forKey: .volume)
+        // A position a later version took out falls back to the default rather than losing the rest.
+        // The notch is the top centre now.
+        let position = (try? container.decodeIfPresent(BannerPosition.self, forKey: .bannerPosition)) ?? nil
+        self.bannerPosition = position == .notch ? .topCenter : position
     }
 }
 
@@ -196,6 +204,9 @@ final class WatchedAppStore {
     /// Kept from when only messaging apps were supported, so earlier settings still load.
     private static let configsKey = "messagingAppConfigs"
     private static let addedAppsKey = "addedApps"
+    /// Set once the installed built-in apps, which used to be listed on their own, were carried
+    /// into the added apps.
+    private static let manualListKey = "appListIsManual"
 
     private(set) var addedApps: [WatchedApp]
     private var configs: [String: WatchedAppConfig]
@@ -205,8 +216,12 @@ final class WatchedAppStore {
         let name: String
         let colorHex: String
 
+        /// A built-in app's own entry when it is one of them.
         var watchedApp: WatchedApp {
-            WatchedApp(id: bundleID, name: name, bundleIDs: [bundleID], defaultColorHex: colorHex,
+            if let builtIn = WatchedApp.builtIn.first(where: { $0.bundleIDs.contains(bundleID) }) {
+                return builtIn
+            }
+            return WatchedApp(id: bundleID, name: name, bundleIDs: [bundleID], defaultColorHex: colorHex,
                        fallbackIconName: "app.badge", isBuiltIn: false)
         }
     }
@@ -218,6 +233,24 @@ final class WatchedAppStore {
         addedApps = (defaults.data(forKey: Self.addedAppsKey)
             .flatMap { try? JSONDecoder().decode([SavedApp].self, from: $0) } ?? [])
             .map(\.watchedApp)
+    }
+
+    /// Glint used to list the built-in apps by itself whenever they were installed. For users from
+    /// then, those apps become added ones, so nothing they watched disappears; a new user starts
+    /// with an empty list. Runs before the store is first used.
+    static func migrateToManualList(_ d: UserDefaults = .standard) {
+        guard !d.bool(forKey: manualListKey) else { return }
+        d.set(true, forKey: manualListKey)
+        guard d.object(forKey: Pref.hasLaunched) != nil else { return }
+        var saved = d.data(forKey: addedAppsKey)
+            .flatMap { try? JSONDecoder().decode([SavedApp].self, from: $0) } ?? []
+        for app in WatchedApp.builtIn where app.isInstalled {
+            guard !saved.contains(where: { app.bundleIDs.contains($0.bundleID) }) else { continue }
+            saved.append(SavedApp(bundleID: app.primaryBundleID, name: app.name, colorHex: app.defaultColorHex))
+        }
+        if let data = try? JSONEncoder().encode(saved) {
+            d.set(data, forKey: addedAppsKey)
+        }
     }
 
     func config(for app: WatchedApp) -> WatchedAppConfig {
@@ -254,9 +287,8 @@ final class WatchedAppStore {
         return app
     }
 
-    /// Stops watching an added app and forgets its settings. Built-in apps can only be turned off.
+    /// Stops watching an app and forgets its settings.
     func remove(_ app: WatchedApp) {
-        guard !app.isBuiltIn else { return }
         addedApps.removeAll { $0.id == app.id }
         configs[app.id] = nil
         saveAddedApps()
@@ -270,7 +302,10 @@ final class WatchedAppStore {
     }
 
     private func saveAddedApps() {
-        let saved = addedApps.map { SavedApp(bundleID: $0.id, name: $0.name, colorHex: $0.defaultColorHex) }
+        // A built-in app is saved by one of its bundle IDs, which brings its entry back on loading.
+        let saved = addedApps.map { app in
+            SavedApp(bundleID: app.isBuiltIn ? app.primaryBundleID : app.id, name: app.name, colorHex: app.defaultColorHex)
+        }
         if let data = try? JSONEncoder().encode(saved) {
             UserDefaults.standard.set(data, forKey: Self.addedAppsKey)
         }
@@ -280,6 +315,11 @@ final class WatchedAppStore {
 extension WatchedAppConfig {
     /// Whether Glint follows the app at all: for its notification, its alarm or both.
     var isWatched: Bool { enabled || alarmEnabled }
+
+    /// Where the app's cards pop up: its own position, or the one from Görünüm Ayarları.
+    func bannerPosition(default fallback: BannerPosition) -> BannerPosition {
+        bannerPosition ?? fallback
+    }
 }
 
 /// Running apps by bundle ID. Each property read on an `NSRunningApplication` is a LaunchServices

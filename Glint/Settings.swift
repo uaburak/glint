@@ -17,6 +17,15 @@ enum Pref {
     static let notifyGlowIntensity = "notifyGlowIntensity"
     static let notifyGlowSeconds = "notifyGlowSeconds"
     static let notifyBannerPosition = "notifyBannerPosition"
+    /// How long a card stays up, in seconds; 0 = until it's closed.
+    static let notifyBannerSeconds = "notifyBannerSeconds"
+    static let notifyPreview = "notifyPreview"
+    /// Which screen the notch island is on: `NotchScreen`.
+    static let notchScreen = "notchScreen"
+    /// Every app with notifications waiting in the island, side by side, instead of the newest one.
+    static let notchShowsAllApps = "notchShowsAllApps"
+    /// A notch Glint draws itself only shows while notifications are waiting.
+    static let notchHidesVirtualWhenEmpty = "notchHidesVirtualWhenEmpty"
     static let notifySound = "notifySound"
     static let notifyVolume = "notifyVolume"
     static let quietDuringFocus = "quietDuringFocus"
@@ -50,6 +59,11 @@ enum Pref {
         notifyGlowIntensity: 0.8,
         notifyGlowSeconds: 1.0,
         notifyBannerPosition: BannerPosition.topRight.rawValue,
+        notifyBannerSeconds: 6.0,
+        notifyPreview: MessagePreview.full.rawValue,
+        notchScreen: NotchScreen.notched.rawValue,
+        notchShowsAllApps: false,
+        notchHidesVirtualWhenEmpty: true,
         notifySound: "builtin.ding",
         notifyVolume: 0.6,
         quietDuringFocus: true,
@@ -120,6 +134,13 @@ enum Pref {
         d.set((glowed ? NotifyEffect.glow : NotifyEffect.none).rawValue, forKey: notifyEffect)
     }
 
+    /// The notch used to be a card position of its own; it's the top centre now.
+    static func migrateBannerPosition(_ d: UserDefaults = .standard) {
+        if d.string(forKey: notifyBannerPosition) == BannerPosition.notch.rawValue {
+            d.set(BannerPosition.topCenter.rawValue, forKey: notifyBannerPosition)
+        }
+    }
+
     static func removeObsoleteSettings() {
         let d = UserDefaults.standard
         for key in obsoleteKeys where d.object(forKey: key) != nil {
@@ -142,30 +163,13 @@ enum NotifyStyle: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    var title: String {
-        switch self {
-        case .full: "Çentik ve kart"
-        case .notch: "Yalnızca çentik"
-        case .banner: "Yalnızca kart"
-        case .none: "Hiçbiri"
-        }
-    }
-
-    var detail: String {
-        switch self {
-        case .full: "Çentikte uygulamanın simgesi, altında mesajı gösteren kart."
-        case .notch: "Çentik büyür, simge ve bekleyen bildirim sayısı görünür."
-        case .banner: "Yalnızca mesajı gösteren kart."
-        case .none: "Mesaj gösterilmez; yalnızca seçtiğin efekt ve ses."
-        }
-    }
-
-    var symbol: String {
-        switch self {
-        case .full: "rectangle.inset.topthird.filled"
-        case .notch: "rectangle.topthird.inset.filled"
-        case .banner: "rectangle.fill.on.rectangle.fill"
-        case .none: "rectangle.dashed"
+    /// The style with the notch and the card each on or off; with both off nothing shows.
+    init(notch: Bool, card: Bool) {
+        self = switch (notch, card) {
+        case (true, true): .full
+        case (true, false): .notch
+        case (false, true): .banner
+        case (false, false): .none
         }
     }
 
@@ -184,30 +188,6 @@ enum NotifyEffect: String, CaseIterable, Identifiable {
     case none
 
     var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .glow: "Işıma"
-        case .none: "Efekt yok"
-        }
-    }
-
-    var detail: String {
-        switch self {
-        case .glow: "Ekran kenarlarında uygulamanın renginde yumuşak ışıma."
-        case .none: "Ekranda hiçbir şey olmaz."
-        }
-    }
-
-    var symbol: String {
-        switch self {
-        case .glow: "sparkles"
-        case .none: "nosign"
-        }
-    }
-
-    /// Whether it can stay on screen until the notifications are read.
-    var canPersist: Bool { self != .none }
 }
 
 enum AlarmStyle: String, CaseIterable, Identifiable {
@@ -232,6 +212,69 @@ enum AlarmStyle: String, CaseIterable, Identifiable {
     }
 }
 
+/// How much of a message its card shows, as macOS's own “Önizlemeleri göster” does. Hiding it keeps
+/// messages off a shared or watched screen.
+enum MessagePreview: String, CaseIterable, Identifiable {
+    /// The sender and the message.
+    case full
+    /// The sender and the message's first line.
+    case short
+    /// The sender, but not the message.
+    case sender
+    /// Only the app.
+    case hidden
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .full: "Tam"
+        case .short: "Kısa"
+        case .sender: "Gönderen"
+        case .hidden: "Gizli"
+        }
+    }
+
+    /// What a card shows for its title: the sender, or the app's name when it's hidden too.
+    func title(_ title: String, app: WatchedApp) -> String {
+        self == .hidden ? app.name : title
+    }
+
+    /// What a card shows for its message.
+    func message(_ message: String) -> String {
+        self == .full || self == .short || message.isEmpty ? message : "Yeni bildirim"
+    }
+
+    /// How many lines of the title and of the message a card shows.
+    var lineLimits: (title: Int, message: Int) {
+        self == .short ? (1, 1) : (2, 4)
+    }
+}
+
+/// Which screen Glint's notch island is on.
+enum NotchScreen: String, CaseIterable, Identifiable {
+    /// The built-in display's notch; none on a Mac without one.
+    case notched
+    /// The main display, the one with the menu bar: its notch, or one Glint draws.
+    case main
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .notched: "Çentikli ekran"
+        case .main: "Ana ekran"
+        }
+    }
+}
+
+/// How the notch island behaves, from Görünüm Ayarları.
+struct NotchSettings: Equatable {
+    var screen: NotchScreen = .notched
+    var showsAllApps = false
+    var hidesVirtualWhenEmpty = true
+}
+
 enum BannerPosition: String, CaseIterable, Identifiable, Codable {
     case topRight = "topRight"
     case topCenter = "topCenter"
@@ -239,7 +282,8 @@ enum BannerPosition: String, CaseIterable, Identifiable, Codable {
     case bottomRight = "bottomRight"
     case bottomCenter = "bottomCenter"
     case bottomLeft = "bottomLeft"
-    /// Waiting in the notch (MacBooks with one): it grows with the app's icon, hovering opens the stack.
+    /// Under the notch, growing out of it. Not a choice of its own: on a Mac with a notch the top centre
+    /// is the notch. Glint uses it for the window there, and settings from before still load.
     case notch = "notch"
 
     var id: String { rawValue }
@@ -288,6 +332,9 @@ struct AppSettings {
     /// nil = keep glowing until the messages are read.
     var notifyGlowDuration: TimeInterval?
     var notifyBannerPosition: BannerPosition
+    /// nil = a card stays up until it's closed or read.
+    var notifyBannerDuration: TimeInterval?
+    var notch: NotchSettings
     var notifySoundID: String
     var notifyVolume: Double
     var quietDuringFocus: Bool
@@ -303,6 +350,7 @@ struct AppSettings {
 
     static func load(_ d: UserDefaults = .standard) -> AppSettings {
         let glowSeconds = d.double(forKey: Pref.notifyGlowSeconds)
+        let bannerSeconds = d.double(forKey: Pref.notifyBannerSeconds)
         let repeatMinutes = d.double(forKey: Pref.alarmRepeatMinutes)
         return AppSettings(
             idleThreshold: d.double(forKey: Pref.idleMinutes) * 60,
@@ -320,6 +368,12 @@ struct AppSettings {
             notifyGlowIntensity: d.double(forKey: Pref.notifyGlowIntensity),
             notifyGlowDuration: glowSeconds > 0 ? glowSeconds : nil,
             notifyBannerPosition: BannerPosition(rawValue: d.string(forKey: Pref.notifyBannerPosition) ?? "") ?? .topRight,
+            notifyBannerDuration: bannerSeconds > 0 ? bannerSeconds : nil,
+            notch: NotchSettings(
+                screen: NotchScreen(rawValue: d.string(forKey: Pref.notchScreen) ?? "") ?? .notched,
+                showsAllApps: d.bool(forKey: Pref.notchShowsAllApps),
+                hidesVirtualWhenEmpty: d.bool(forKey: Pref.notchHidesVirtualWhenEmpty)
+            ),
             notifySoundID: d.string(forKey: Pref.notifySound) ?? "builtin.ding",
             notifyVolume: d.double(forKey: Pref.notifyVolume),
             quietDuringFocus: d.bool(forKey: Pref.quietDuringFocus),

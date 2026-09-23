@@ -2,52 +2,91 @@ import AppKit
 import Observation
 import SwiftUI
 
-/// The camera housing at the top of a built-in MacBook display.
+/// Where Glint's island sits: the camera housing at the top of a built-in MacBook display, or a notch
+/// Glint draws itself on a screen without one.
 struct Notch {
     let screen: NSScreen
     /// In screen coordinates: from the top of the screen down to the housing's bottom edge.
     let frame: NSRect
+    /// Drawn by Glint: there's no housing behind it.
+    var isVirtual = false
 
-    /// The notch of the first screen that has one, or nil on Macs (and displays) without.
+    /// A drawn notch is as wide as a MacBook's.
+    static let virtualWidth: CGFloat = 185
+
+    /// The notch on the screen chosen in Görünüm Ayarları: the built-in display's, or the main
+    /// display's (drawn when it has none). nil when the chosen screen has no notch to use.
     @MainActor static var current: Notch? {
-        for screen in NSScreen.screens {
-            guard screen.safeAreaInsets.top > 0,
-                  let left = screen.auxiliaryTopLeftArea,
-                  let right = screen.auxiliaryTopRightArea,
-                  right.minX > left.maxX else { continue }
-            let height = screen.safeAreaInsets.top
-            // The auxiliary areas are in the screen's own coordinate space, which is the global one
-            // only for a display at the origin: with another display to its left or above, the
-            // built-in screen's frame starts elsewhere and their x would be off by that much. Widths
-            // are the same in both spaces, so the notch is placed by the room the left area leaves.
-            return Notch(
-                screen: screen,
-                frame: NSRect(
-                    x: screen.frame.minX + left.width,
-                    y: screen.frame.maxY - height,
-                    width: right.minX - left.maxX,
-                    height: height
-                )
-            )
+        let choice = NotchScreen(rawValue: UserDefaults.standard.string(forKey: Pref.notchScreen) ?? "") ?? .notched
+        switch choice {
+        case .notched:
+            return NSScreen.screens.lazy.compactMap(hardware(on:)).first
+        case .main:
+            guard let main = NSScreen.screens.first else { return nil }
+            return hardware(on: main) ?? virtual(on: main)
         }
-        return nil
+    }
+
+    /// The screen's own notch, if it has one.
+    @MainActor static func hardware(on screen: NSScreen) -> Notch? {
+        guard screen.safeAreaInsets.top > 0,
+              let left = screen.auxiliaryTopLeftArea,
+              let right = screen.auxiliaryTopRightArea,
+              right.minX > left.maxX else { return nil }
+        let height = screen.safeAreaInsets.top
+        // The auxiliary areas are in the screen's own coordinate space, which is the global one
+        // only for a display at the origin: with another display to its left or above, the
+        // built-in screen's frame starts elsewhere and their x would be off by that much. Widths
+        // are the same in both spaces, so the notch is placed by the room the left area leaves.
+        return Notch(
+            screen: screen,
+            frame: NSRect(
+                x: screen.frame.minX + left.width,
+                y: screen.frame.maxY - height,
+                width: right.minX - left.maxX,
+                height: height
+            )
+        )
+    }
+
+    /// A notch drawn in the middle of the screen's menu bar, as tall as the menu bar.
+    @MainActor static func virtual(on screen: NSScreen) -> Notch {
+        let menuBar = screen.frame.maxY - screen.visibleFrame.maxY
+        // A hidden menu bar leaves no room to measure; the standard height then.
+        let height = min(max(menuBar > 0 ? menuBar : NSStatusBar.system.thickness, 22), 40)
+        return Notch(
+            screen: screen,
+            frame: NSRect(
+                x: (screen.frame.midX - virtualWidth / 2).rounded(),
+                y: screen.frame.maxY - height,
+                width: virtualWidth,
+                height: height
+            ),
+            isVirtual: true
+        )
     }
 }
 
-/// Glint's “Dynamic Island”. In the notch position it always sits on the notch, at the notch's size.
-/// It grows to both sides while hovered or while the banner overlay holds it open (a banner dropping
-/// from the notch, or the list open below it). With notifications waiting it shows the newest app's
-/// icon on the left and a button that clears them all (`onClearAll`) on the right; with none, Glint's
-/// icon and a settings button (`onOpenSettings`). Hovering is reported through `onHoverChanged`, so
-/// the banner overlay can open the list.
+/// Glint's “Dynamic Island”. It sits on the notch, at the notch's size, and grows to both sides while
+/// hovered or while the banner overlay holds it open (a banner dropping from the notch, or the list
+/// open below it). With notifications waiting it shows the newest app's icon on the left (or every
+/// waiting app's, side by side) and a button that clears them all (`onClearAll`) on the right; with
+/// none, Glint's icon and a settings button (`onOpenSettings`). Hovering is reported through
+/// `onHoverChanged`, so the banner overlay can open the list. On a screen without a notch it sits on
+/// one it draws, which can stay away while nothing is waiting.
 ///
 /// The window always has the grown size and never resizes, so growing and shrinking is a single
 /// SwiftUI animation. The pointer is tracked instead of relying on hover events: outside the island's
 /// current shape the window ignores the mouse, so the menu bar beside the notch stays clickable.
 @MainActor
 final class NotchOverlay {
-    /// How far the black grows on each side of the notch.
+    /// How far the black grows on each side of the notch, with one icon in it.
     static let expansion: CGFloat = 38
+    /// Most app icons the island shows side by side.
+    static let maxIcons = 3
+    /// What each icon past the first adds to the growth: the icon and the gap before it, room for
+    /// the count on its corner.
+    static let iconStep: CGFloat = 30
     /// Width of the blur beside the grown island that softens the menu bar's titles into it.
     static let feather: CGFloat = 34
     /// The concave curves joining the shape to the screen's top edge.
@@ -66,6 +105,15 @@ final class NotchOverlay {
     private static let placeCheckEvery = 15
     /// When the displays change, windows keep being moved for a moment after the notification.
     private static let screenSettleDelays: [TimeInterval] = [0.3, 1.2]
+
+    /// How the island behaves; set from Görünüm Ayarları.
+    var settings = NotchSettings() {
+        didSet {
+            guard settings != oldValue else { return }
+            island.showsAllApps = settings.showsAllApps
+            place()
+        }
+    }
 
     var onHoverChanged: ((Bool) -> Void)?
     var onClearAll: (() -> Void)?
@@ -122,7 +170,10 @@ final class NotchOverlay {
     /// Puts the island where the notch is now. Safe to call again at any time: it only touches the
     /// window when something has actually moved.
     private func place() {
-        guard wanted, let notch = Notch.current else {
+        guard wanted, let notch = Notch.current,
+              // A drawn notch goes away with the last notification, if the user asked for that.
+              !(notch.isVirtual && settings.hidesVirtualWhenEmpty && model.stacks.isEmpty)
+        else {
             showing = false
             updateExpansion()
             hide()
@@ -137,13 +188,13 @@ final class NotchOverlay {
         // Room for the grown island and the blur on each side of it. Re-applied even when the notch
         // itself hasn't moved: macOS shifts windows when the displays change, and the island stayed
         // where it was pushed — in the middle of the screen after an external display went away.
-        let frame = Self.shapeFrame(for: notch, grown: true).insetBy(dx: -Self.feather, dy: 0)
+        let frame = Self.shapeFrame(for: notch, extra: Self.expansion(icons: Self.maxIcons)).insetBy(dx: -Self.feather, dy: 0)
         if panel.frame != frame {
             panel.setFrame(frame, display: false)
         }
         // Window frames snap to whole points; shift the island so it stays centred on the notch.
         let centerOffset = notch.frame.midX - panel.frame.midX
-        if self.notch?.frame.size != notch.frame.size || centerOffset != appliedCenterOffset {
+        if self.notch?.frame.size != notch.frame.size || self.notch?.isVirtual != notch.isVirtual || centerOffset != appliedCenterOffset {
             appliedCenterOffset = centerOffset
             panel.contentView = FirstMouseHostingView(rootView: NotchIslandView(
                 model: model,
@@ -198,7 +249,8 @@ final class NotchOverlay {
         }
         guard let panel, let notch, showing else { return }
         // A point of slack at the top: the pointer can rest on the screen's very edge.
-        let shape = Self.shapeFrame(for: notch, grown: island.expanded).insetBy(dx: 0, dy: -1)
+        let extra = island.expanded ? Self.expansion(icons: iconCount) : 0
+        let shape = Self.shapeFrame(for: notch, extra: extra).insetBy(dx: 0, dy: -1)
         let inside = NSMouseInRect(pointerLocation(), shape, false)
         if panel.ignoresMouseEvents == inside {
             panel.ignoresMouseEvents = !inside
@@ -255,10 +307,24 @@ final class NotchOverlay {
         }
     }
 
-    /// The island's outline in screen coordinates, ears included.
-    private static func shapeFrame(for notch: Notch, grown: Bool) -> NSRect {
-        let extra = grown ? expansion : 0
-        return NSRect(
+    /// How many app icons the island shows now.
+    private var iconCount: Int {
+        Self.iconCount(showsAllApps: settings.showsAllApps, waiting: model.stacks.count)
+    }
+
+    static func iconCount(showsAllApps: Bool, waiting: Int) -> Int {
+        showsAllApps ? min(max(waiting, 1), maxIcons) : 1
+    }
+
+    /// How far the black grows on each side with this many icons in it. The two sides grow alike, so
+    /// the island stays centred on the notch.
+    static func expansion(icons: Int) -> CGFloat {
+        expansion + CGFloat(max(icons, 1) - 1) * iconStep
+    }
+
+    /// The island's outline in screen coordinates, ears included, grown by `extra` on each side.
+    private static func shapeFrame(for notch: Notch, extra: CGFloat) -> NSRect {
+        NSRect(
             x: notch.frame.minX - extra - earRadius,
             y: notch.frame.minY,
             width: notch.frame.width + 2 * extra + 2 * earRadius,
@@ -297,11 +363,13 @@ final class NotchOverlay {
     }
 }
 
-/// Whether the island is grown (with its icons) or sits on the notch at its size.
+/// Whether the island is grown (with its icons) or sits on the notch at its size, and what it shows.
 @MainActor
 @Observable
 final class IslandState {
     var expanded = false
+    /// Every waiting app's icon, side by side, instead of the newest one's.
+    var showsAllApps = false
 }
 
 // MARK: - Island view
@@ -321,8 +389,10 @@ struct NotchIslandView: View {
     var body: some View {
         let newest = model.stacks.first
         let grown = island.expanded
+        let icons = NotchOverlay.iconCount(showsAllApps: island.showsAllApps, waiting: model.stacks.count)
+        let expansion = NotchOverlay.expansion(icons: icons)
         let shape = NotchShape(earRadius: NotchOverlay.earRadius, bottomRadius: NotchOverlay.bottomRadius)
-        let grownWidth = notchSize.width + 2 * NotchOverlay.earRadius + 2 * NotchOverlay.expansion
+        let grownWidth = notchSize.width + 2 * NotchOverlay.earRadius + 2 * expansion
         let blurSize = CGSize(width: grownWidth + 2 * NotchOverlay.feather, height: notchSize.height)
 
         ZStack {
@@ -340,9 +410,15 @@ struct NotchIslandView: View {
                 // Pinned to the shape's edges: while shrunk they sit behind the notch's hardware, and
                 // as the island grows they slide out of it. The gap beside each is the gap below it.
                 HStack(spacing: 0) {
-                    leadingIcon(newest)
-                        .scaleEffect(grown ? 1 : 0.4)
-                        .opacity(grown ? 1 : 0)
+                    Group {
+                        if island.showsAllApps, model.stacks.count > 1 {
+                            appIcons(Array(model.stacks.prefix(NotchOverlay.maxIcons)))
+                        } else {
+                            leadingIcon(newest)
+                        }
+                    }
+                    .scaleEffect(grown ? 1 : 0.4)
+                    .opacity(grown ? 1 : 0)
                     Spacer(minLength: 0)
                     trailingButton(empty: newest == nil)
                         .scaleEffect(grown ? 1 : 0.4)
@@ -350,13 +426,14 @@ struct NotchIslandView: View {
                 }
                 .padding(.horizontal, NotchOverlay.earRadius + itemInset)
             }
-            .frame(width: grown ? grownWidth : grownWidth - 2 * NotchOverlay.expansion, height: notchSize.height)
+            .frame(width: grown ? grownWidth : grownWidth - 2 * expansion, height: notchSize.height)
             .clipShape(shape)
             .allowsHitTesting(grown)
         }
         .offset(x: centerOffset)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .animation(Self.resize, value: grown)
+        .animation(Self.resize, value: icons)
     }
 
     /// The icon and the button are this big, each in a square.
@@ -396,6 +473,29 @@ struct NotchIslandView: View {
             }
         }
         .animation(.easeInOut(duration: 0.2), value: newest == nil)
+    }
+
+    /// Every waiting app's icon side by side, the newest first, each with its own count.
+    private func appIcons(_ stacks: [BannerStackModel.Stack]) -> some View {
+        HStack(spacing: NotchOverlay.iconStep - Self.itemSize) {
+            ForEach(stacks) { stack in
+                appIcon(stack.app)
+                    .frame(width: Self.itemSize, height: Self.itemSize)
+                    // The app a notification just came from gives a little bounce.
+                    .keyframeAnimator(initialValue: 1.0, trigger: stack.items.first?.id) { content, scale in
+                        content.scaleEffect(scale)
+                    } keyframes: { _ in
+                        CubicKeyframe(1.22, duration: 0.14)
+                        SpringKeyframe(1.0, duration: 0.32, spring: .smooth)
+                    }
+                    .overlay(alignment: .topTrailing) {
+                        CountBadge(count: stack.received)
+                            .offset(x: 6, y: -max(0, itemInset - 1))
+                    }
+                    .transition(.scale.combined(with: .opacity))
+            }
+        }
+        .animation(.easeInOut(duration: 0.25), value: stacks.map(\.id))
     }
 
     /// A bare symbol, square like the icon, so the gaps around it match the icon's.
@@ -460,7 +560,12 @@ struct NotchFeatherBlur: NSViewRepresentable {
         return view
     }
 
-    func updateNSView(_ view: NSVisualEffectView, context: Context) {}
+    /// The island grows wider with more icons in it, and the blur with it.
+    func updateNSView(_ view: NSVisualEffectView, context: Context) {
+        if view.maskImage?.size != size {
+            view.maskImage = Self.mask(size: size, feather: feather)
+        }
+    }
 
     /// Opaque in the middle, fading to clear over `feather` at each end.
     private static func mask(size: CGSize, feather: CGFloat) -> NSImage {

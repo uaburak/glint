@@ -22,7 +22,7 @@ struct QuietPage: View {
                         Text(controller.quietReason.map { "Sessiz (\($0.title))" } ?? "Bildirimler sesli")
                     }
                 }
-                Hint("Sessizken ses, ışıma ve alarm olmaz; yüzen bildirimler sessizce gelir.")
+                Hint("Sessizken ses, ışıma ve alarm olmaz; mesaj kartları sessizce gelir.")
             }
 
             Section("macOS Odak") {
@@ -32,7 +32,6 @@ struct QuietPage: View {
                         Button("Ayarları Aç…", action: SystemSettings.openFullDiskAccess)
                     }
                 }
-                Hint("Rahatsız Etme, Uyku, İş gibi bir Odak açıkken Glint de sessiz kalır. Tam Disk Erişimi gerekir.")
             }
 
             Section("Sessiz Saatler") {
@@ -42,14 +41,13 @@ struct QuietPage: View {
                     DatePicker("Bitiş", selection: time($quietHoursEnd), displayedComponents: .hourAndMinute)
                 }
                 .disabled(!quietHoursEnabled)
-                Hint("Bitiş başlangıçtan erkense sessiz saatler gece yarısını geçer (ör. 22:00–07:00).")
             }
 
             Section("Önemli Bildirimler") {
                 TextField("Önemli kelimeler", text: $keywords, prompt: Text("ör. @Burak, acil, Ahmet Yılmaz"), axis: .vertical)
                     .lineLimit(2...4)
                 Toggle("Önemli bildirimler sessiz modu deler", isOn: $importantBreaksQuiet)
-                Hint("Başlığında ya da metninde bu kelimeler geçen bildirim önemlidir. Virgülle ya da satır satır yaz; büyük/küçük harf fark etmez.")
+                Hint("Bu kelimelerden biri geçen bildirim önemli sayılır. Virgülle ayır.")
             }
         }
     }

@@ -36,7 +36,7 @@ struct AppsPage: View {
         Form {
             Section {
                 if apps.isEmpty {
-                    Text("Henüz izlenen uygulama yok.")
+                    Text("Bildirimlerini Glint'te görmek istediğin uygulamaları ekle.")
                         .foregroundStyle(.secondary)
                 }
                 ForEach(apps) { app in
@@ -47,10 +47,6 @@ struct AppsPage: View {
                     Spacer()
                     AddAppMenu(added: open)
                 }
-            }
-
-            Section {
-                Hint("İstediğin uygulamayı ekleyebilirsin. Teams, WhatsApp, Telegram, Slack, Discord ve Signal yüklüyse kendiliğinden listelenir.")
             }
         }
     }
@@ -63,7 +59,6 @@ private struct AppRow: View {
 
     var body: some View {
         let config = WatchedAppStore.shared.config(for: app)
-        let unread = controller.appStatuses[app.id]?.unread ?? 0
         Button(action: action) {
             HStack(spacing: 10) {
                 AppIcon(app: app, size: 28)
@@ -74,15 +69,6 @@ private struct AppRow: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                if unread > 0 {
-                    Text("\(unread)")
-                        .font(.caption.weight(.semibold))
-                        .monospacedDigit()
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 2)
-                        .background(.red, in: Capsule())
-                        .foregroundStyle(.white)
-                }
                 Circle()
                     .fill(Color(hex: config.glowColorHex))
                     .frame(width: 10, height: 10)
@@ -162,7 +148,7 @@ private struct AddAppMenu: View {
 
 // MARK: - Uygulama sayfası
 
-/// One app's own settings: notification and alarm, glow color, sound and volume.
+/// One app's own settings: notification and alarm, glow color, card position, sound and volume.
 struct AppDetailPage: View {
     let app: WatchedApp
     let controller: AlarmController
@@ -170,40 +156,44 @@ struct AppDetailPage: View {
 
     @AppStorage(Pref.notifySound) private var defaultSound = "builtin.ding"
     @AppStorage(Pref.notifyVolume) private var defaultVolume = 0.6
+    @AppStorage(Pref.notifyBannerPosition) private var defaultPositionName = BannerPosition.topRight.rawValue
+    @AppStorage(Pref.notifyStyle) private var styleName = NotifyStyle.full.rawValue
     @State private var confirmingRemoval = false
 
     private var store: WatchedAppStore { .shared }
     private var config: WatchedAppConfig { store.config(for: app) }
+    private var defaultPosition: BannerPosition { BannerPosition(rawValue: defaultPositionName) ?? .topRight }
+    private var showsCards: Bool { (NotifyStyle(rawValue: styleName) ?? .full).showsBanner }
 
     var body: some View {
         Form {
+            // Like the top of an app's page in macOS's notification settings.
             Section {
-                HStack(spacing: 14) {
-                    AppIcon(app: app, size: 48)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(app.name)
-                            .font(.title3.weight(.semibold))
-                        Text(statusText)
-                            .font(.callout)
+                HStack(spacing: 10) {
+                    AppIcon(app: app, size: 30)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Glint bildirimleri")
+                        Text(app.isInstalled ? app.name : "\(app.name) · Yüklü değil")
+                            .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Button("Uygulamayı Aç") { app.openApplication() }
-                        .disabled(!app.isInstalled)
+                    Toggle("Glint bildirimleri", isOn: binding(\.enabled))
+                        .labelsHidden()
                 }
-                .padding(.vertical, 4)
             }
 
             Section("Bildirim") {
-                Toggle("Glint bildirimi", isOn: binding(\.enabled))
                 Toggle("Uzaktayken alarm çal", isOn: binding(\.alarmEnabled))
                 Toggle("Alarmı yalnızca önemli bildirimlerde çal", isOn: binding(\.alarmOnlyImportant))
                     .disabled(!config.alarmEnabled)
                     .help("Önemli kelimeler Odak ve Öncelik sayfasından seçilir.")
-                LabeledContent("macOS bildirimleri") {
+                LabeledContent {
                     Button("Bildirim Ayarlarını Aç…") { app.openNotificationSettings() }
+                } label: {
+                    Text("macOS bildirimleri")
+                    Text("Mesajlar iki kez görünmesin diye yalnızca Masaüstü'nü kapat.")
                 }
-                Hint("Bildirim: ekran kenarında ışıma ve ses. Alarm: bilgisayar başında değilken tam ekran uyarı.")
             }
 
             Section("Görünüm") {
@@ -217,6 +207,21 @@ struct AppDetailPage: View {
                         }
                         ColorPicker("Işıma rengi", selection: colorBinding, supportsOpacity: false)
                             .labelsHidden()
+                    }
+                }
+                if showsCards {
+                    LabeledContent("Kartın konumu") {
+                        HStack(spacing: 12) {
+                            if config.bannerPosition != nil {
+                                Button("Varsayılana Dön") {
+                                    store.update(app) { $0.bannerPosition = nil }
+                                    controller.testNotification(for: app)
+                                }
+                                .buttonStyle(.borderless)
+                            }
+                            BannerPositionPicker(selection: positionBinding) { controller.testNotification(for: app) }
+                                .frame(width: 150)
+                        }
                     }
                 }
             }
@@ -239,7 +244,6 @@ struct AppDetailPage: View {
                         .buttonStyle(.borderless)
                     }
                 }
-                Hint("Varsayılan ses ve seviye Bildirim Ayarları sayfasından değiştirilir.")
             }
             .disabled(!config.enabled)
 
@@ -256,9 +260,7 @@ struct AppDetailPage: View {
                         Label("Alarmı Test Et", systemImage: "alarm.waves.left.and.right")
                     }
                     Spacer()
-                    if !app.isBuiltIn {
-                        Button("Listeden Kaldır…", role: .destructive) { confirmingRemoval = true }
-                    }
+                    Button("Listeden Kaldır…", role: .destructive) { confirmingRemoval = true }
                 }
             }
         }
@@ -273,18 +275,22 @@ struct AppDetailPage: View {
         }
     }
 
-    private var statusText: String {
-        guard app.isInstalled else { return "Yüklü değil" }
-        let running = controller.appStatuses[app.id]?.running ?? (app.runningApp != nil)
-        guard running else { return "Kapalı" }
-        let unread = controller.appStatuses[app.id]?.unread ?? 0
-        return unread > 0 ? "Açık · \(unread) okunmamış" : "Açık · okunmamış yok"
-    }
-
     private func binding(_ field: WritableKeyPath<WatchedAppConfig, Bool>) -> Binding<Bool> {
         Binding(
             get: { config[keyPath: field] },
             set: { value in store.update(app) { $0[keyPath: field] = value } }
+        )
+    }
+
+    /// The app's own position, or the default until one is picked. Picking the default again goes
+    /// back to following it.
+    private var positionBinding: Binding<BannerPosition> {
+        Binding(
+            get: { config.bannerPosition(default: defaultPosition) },
+            set: { position in
+                let own = position == defaultPosition ? nil : position
+                store.update(app) { $0.bannerPosition = own }
+            }
         )
     }
 
