@@ -36,7 +36,7 @@ final class TeamsMessageSource {
     /// Whether the store reads as expected: false means Glint is back on macOS's records alone.
     private(set) var isReadable = false
 
-    private static let teamsFolder = FileManager.default.homeDirectoryForCurrentUser
+    nonisolated private static let teamsFolder = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Containers/com.microsoft.teams2/Data/Library/Application Support/Microsoft/MSTeams")
 
     private let teamsFolder: URL

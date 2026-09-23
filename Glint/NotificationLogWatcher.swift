@@ -19,7 +19,7 @@ final class NotificationLogWatcher {
     /// Notification Center's own line, which carries the bundle identifier twice; the one after
     /// "from app" is the app that posted it.
     private static let predicate = #"subsystem == "com.apple.unc" AND eventMessage CONTAINS "addOrUpdate listItem:""#
-    private static let marker = "from app "
+    nonisolated private static let marker = "from app "
     /// After the stream stops (log restarted, machine woke), it's started again after this long.
     private static let restartDelay: TimeInterval = 2
 
@@ -50,7 +50,7 @@ final class NotificationLogWatcher {
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
 
-        pipe.fileHandleForReading.readabilityHandler = { handle in
+        pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
             guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
             let bundleIDs = text.split(whereSeparator: \.isNewline).compactMap(Self.bundleID(inLine:))
@@ -63,7 +63,7 @@ final class NotificationLogWatcher {
             }
         }
 
-        process.terminationHandler = { _ in
+        process.terminationHandler = { [weak self] _ in
             Task { @MainActor [weak self] in self?.streamEnded() }
         }
 
@@ -110,7 +110,7 @@ final class NotificationLogWatcher {
 
     /// The app in one of Notification Center's lines:
     /// `addOrUpdate listItem: <app>:<id>:<id> from app <app>, canDisplayWhileCenterIsClosed: …`
-    static func bundleID(inLine line: some StringProtocol) -> String? {
+    nonisolated static func bundleID(inLine line: some StringProtocol) -> String? {
         guard let start = line.range(of: marker) else { return nil }
         let rest = line[start.upperBound...]
         let bundleID = rest.prefix { !$0.isWhitespace && $0 != "," }

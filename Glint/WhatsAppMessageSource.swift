@@ -73,7 +73,7 @@ final class WhatsAppMessageSource {
     /// no Full Disk Access, WhatsApp never started, or an update that changed its tables.
     private(set) var isReadable = false
 
-    private static let databaseURL = FileManager.default.homeDirectoryForCurrentUser
+    nonisolated private static let databaseURL = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Group Containers/group.net.whatsapp.WhatsApp.shared/ChatStorage.sqlite")
 
     private let databasePath: String
