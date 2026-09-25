@@ -78,89 +78,226 @@ struct MenuBarMarks: View {
     }
 }
 
-// MARK: - Bildirim stilleri
+// MARK: - Efekt ve bildirim stilleri
 
-/// A way notifications show, the way macOS's notification settings show theirs: a small screen with
-/// it on, its name and a checkbox under it. The screen can be clicked too.
-struct NotificationStyleOption: View {
-    enum Kind { case notch, banner, glow, menuBar }
-    let kind: Kind
+/// A style to pick: its card, ringed in the accent colour while it's on, and its name under it. The
+/// effects have one on at a time, the notification styles any number.
+struct StyleChoice: View {
+    let card: StyleCard
     let title: String
-    @Binding var isOn: Bool
+    let isOn: Bool
+    let action: () -> Void
+
+    /// A row of two doesn't blow its cards up.
+    private static let maxWidth: CGFloat = 180
+    private static let ringWidth: CGFloat = 2
+    /// From the card's edge to the ring's outer edge.
+    private static let ringInset: CGFloat = 4
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 10) {
+                card
+                    .overlay {
+                        GeometryReader { geometry in
+                            RoundedRectangle(cornerRadius: StyleCard.cornerRadius(geometry.size) + Self.ringInset, style: .continuous)
+                                .strokeBorder(Color.accentColor, lineWidth: Self.ringWidth)
+                                .padding(-Self.ringInset)
+                                .opacity(isOn ? 1 : 0)
+                        }
+                    }
+                    // Room for the ring, so a card doesn't move when it's picked.
+                    .padding(Self.ringInset)
+                Text(title)
+                    .foregroundStyle(isOn ? Color.primary : Color.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+            }
+            .frame(maxWidth: Self.maxWidth)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .frame(maxWidth: .infinity)
+        .accessibilityAddTraits(isOn ? .isSelected : [])
+        .animation(.easeOut(duration: 0.15), value: isOn)
+    }
+}
+
+/// A screen drawn small and plain, with what a style does on it: the Dock along the bottom, and the
+/// effect (the edges lit, or the screen darkened), the floating card at the top, the count in the menu
+/// bar, the bubble by the pointer, the island grown out of the notch, a sign in the middle, as asked
+/// for. Every style's card is this one, with its own parts on.
+struct StyleCard: View {
+    struct Content: OptionSet {
+        let rawValue: Int
+        static let banner = Content(rawValue: 1 << 0)
+        static let menuBar = Content(rawValue: 1 << 1)
+        static let pointer = Content(rawValue: 1 << 2)
+    }
+
+    var effect: NotifyEffect = .none
+    var content: Content = []
+    /// A symbol in the middle: the voice, the sign for no effect, a kind of screen.
+    var symbol: String?
+    /// App icons in the island grown out of the notch; none, no island.
+    var islandIcons = 0
+    /// The count on the island's icons.
+    var islandBadges = true
+    /// The island as a capsule floating below the top edge, rather than a notch joined to it.
+    var islandFloats = false
+
+    static let aspectRatio: CGFloat = 1.45
+
+    static func cornerRadius(_ size: CGSize) -> CGFloat { size.height * 0.15 }
+
+    /// The Dock, the floating card, the bubble: the screen's shapes.
+    private static let shape = Color.primary.opacity(0.28)
+    /// The signs and the pointer, drawn a little stronger.
+    private static let sign = Color.primary.opacity(0.45)
+    private static let glowColor = Color(red: 0.1, green: 0.43, blue: 1)
+
+    var body: some View {
+        GeometryReader { geometry in
+            let size = geometry.size
+            let outline = RoundedRectangle(cornerRadius: Self.cornerRadius(size), style: .continuous)
+            outline
+                .fill(effect == .dim ? AnyShapeStyle(Color.black.opacity(0.4)) : AnyShapeStyle(Color.primary.opacity(0.09)))
+                .overlay {
+                    if effect == .glow {
+                        // The edges lit, fading in towards the middle.
+                        outline
+                            .strokeBorder(Self.glowColor, lineWidth: size.width * 0.09)
+                            .blur(radius: size.width * 0.06)
+                    }
+                }
+                .overlay(alignment: .bottom) {
+                    // The Dock.
+                    Capsule()
+                        .fill(Self.shape)
+                        .frame(width: size.width * 0.5, height: size.height * 0.08)
+                        .padding(.bottom, size.height * 0.1)
+                }
+                .overlay(alignment: .top) {
+                    if content.contains(.banner) {
+                        Capsule()
+                            .fill(Self.shape)
+                            .frame(width: size.width * 0.24, height: size.height * 0.08)
+                            .padding(.top, size.height * 0.1)
+                    }
+                }
+                .overlay(alignment: .topTrailing) {
+                    if content.contains(.menuBar) {
+                        // Glint's bell and the count, at the menu bar's right end.
+                        HStack(spacing: size.width * 0.012) {
+                            Image(systemName: "bell.fill")
+                            Text("3").fontWeight(.bold)
+                        }
+                        .font(.system(size: max(size.height * 0.09, 7), weight: .semibold))
+                        .foregroundStyle(Color.primary.opacity(0.7))
+                        .padding(.horizontal, size.width * 0.03)
+                        .padding(.vertical, size.height * 0.02)
+                        .background(Self.shape, in: Capsule())
+                        .padding(.top, size.height * 0.08)
+                        .padding(.trailing, size.width * 0.05)
+                    }
+                }
+                .overlay(alignment: .topLeading) {
+                    if content.contains(.pointer) {
+                        // The pointer, and the bubble up and to the right of its tip.
+                        ZStack(alignment: .topLeading) {
+                            Capsule()
+                                .fill(Self.shape)
+                                .frame(width: size.width * 0.3, height: size.height * 0.11)
+                                .offset(x: size.width * 0.44, y: size.height * 0.3)
+                            Image(systemName: "cursorarrow")
+                                .font(.system(size: size.height * 0.2, weight: .semibold))
+                                .foregroundStyle(Self.sign)
+                                .offset(x: size.width * 0.37, y: size.height * 0.44)
+                        }
+                    }
+                }
+                .overlay {
+                    if let symbol {
+                        Image(systemName: symbol)
+                            .font(.system(size: size.height * 0.3, weight: .semibold))
+                            .foregroundStyle(Self.sign)
+                            .offset(y: islandIcons > 0 ? size.height * 0.03 : -size.height * 0.02)
+                    }
+                }
+                .overlay(alignment: .top) {
+                    if islandIcons > 0 { island(on: size) }
+                }
+                .clipShape(outline)
+        }
+        .aspectRatio(Self.aspectRatio, contentMode: .fit)
+    }
+
+    /// Messaging apps' colours, for the icons in the island.
+    private static let appColors = [
+        Color(red: 0.15, green: 0.83, blue: 0.4),
+        Color(red: 0.36, green: 0.37, blue: 0.78),
+        Color(red: 0.14, green: 0.63, blue: 0.87),
+    ]
+
+    /// The island grown out of the notch (or floating): the apps' icons on the left, each with its
+    /// count, and the button that clears them on the right.
+    private func island(on size: CGSize) -> some View {
+        let height = size.height * (islandFloats ? 0.13 : 0.16)
+        let icon = height * 0.52
+        let shape = islandFloats
+            ? AnyShape(Capsule())
+            : AnyShape(UnevenRoundedRectangle(bottomLeadingRadius: height * 0.45, bottomTrailingRadius: height * 0.45, style: .continuous))
+        return shape
+            .fill(.black)
+            // A floating island is a little shorter than a grown notch.
+            .frame(width: size.width * ((islandFloats ? 0.26 : 0.32) + 0.11 * CGFloat(islandIcons - 1)), height: height)
+            .overlay(alignment: .leading) {
+                HStack(spacing: icon * 0.55) {
+                    ForEach(0..<islandIcons, id: \.self) { index in
+                        Circle()
+                            .fill(Self.appColors[index % Self.appColors.count])
+                            .frame(width: icon, height: icon)
+                            .overlay(alignment: .topTrailing) {
+                                if islandBadges {
+                                    Circle()
+                                        .fill(.red)
+                                        .frame(width: icon * 0.5, height: icon * 0.5)
+                                        .offset(x: icon * 0.2, y: -icon * 0.15)
+                                }
+                            }
+                    }
+                }
+                .padding(.leading, height * 0.4)
+            }
+            .overlay(alignment: .trailing) {
+                Image(systemName: "xmark")
+                    .font(.system(size: icon * 0.7, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.7))
+                    .padding(.trailing, height * 0.45)
+            }
+            .padding(.top, islandFloats ? size.height * 0.03 : 0)
+    }
+}
+
+/// A small picker with its name under it, as macOS names its thumbnails.
+struct PickerWithLabel<Picker: View>: View {
+    let title: String
+    @ViewBuilder let picker: Picker
+
+    init(_ title: String, @ViewBuilder picker: () -> Picker) {
+        self.title = title
+        self.picker = picker()
+    }
 
     var body: some View {
         VStack(spacing: 8) {
-            Button { isOn.toggle() } label: {
-                MiniScreen(notch: kind == .notch) { size in drawing(on: size) }
-                    .aspectRatio(1.56, contentMode: .fit)
-                    .frame(maxWidth: 104)
-            }
-            .buttonStyle(.plain)
+            picker
             Text(title)
-                .lineLimit(1)
-                .minimumScaleFactor(0.85)
-            Toggle(title, isOn: $isOn)
-                .toggleStyle(.checkbox)
-                .labelsHidden()
+                .font(.callout)
+                .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)
     }
-
-    @ViewBuilder
-    private func drawing(on size: CGSize) -> some View {
-        switch kind {
-        case .notch:
-            // The island grown out of the notch: the app's icon on the left, the count on the right.
-            UnevenRoundedRectangle(
-                bottomLeadingRadius: size.height * 0.08, bottomTrailingRadius: size.height * 0.08,
-                style: .continuous
-            )
-            .fill(.black)
-            .frame(width: size.width * 0.36, height: size.height * 0.15)
-            .overlay(alignment: .leading) {
-                Circle()
-                    .fill(Self.appColor)
-                    .frame(width: size.height * 0.08)
-                    .padding(.leading, size.height * 0.05)
-            }
-            .overlay(alignment: .trailing) {
-                Capsule()
-                    .fill(.white.opacity(0.9))
-                    .frame(width: size.width * 0.05, height: size.height * 0.04)
-                    .padding(.trailing, size.height * 0.06)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        case .banner:
-            RoundedRectangle(cornerRadius: size.height * 0.04, style: .continuous)
-                .fill(.white.opacity(0.9))
-                .frame(width: size.width * 0.3, height: size.height * 0.12)
-                .padding(.top, size.height * 0.13)
-                .padding(.trailing, size.width * 0.05)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-        case .glow:
-            // The edges lit in the app's colour.
-            RoundedRectangle(cornerRadius: size.width * 0.06, style: .continuous)
-                .strokeBorder(Self.appColor, lineWidth: size.width * 0.04)
-                .blur(radius: size.width * 0.025)
-        case .menuBar:
-            // Glint's bell with the number waiting, just left of the other items.
-            HStack(spacing: size.width * 0.012) {
-                Image(systemName: "bell.fill")
-                Text("3").fontWeight(.bold)
-            }
-            .font(.system(size: max(size.height * 0.1, 6)))
-            .foregroundStyle(.white)
-            .padding(.horizontal, size.width * 0.02)
-            .padding(.vertical, size.height * 0.008)
-            .background(.white.opacity(0.28), in: Capsule())
-            .padding(.top, size.height * 0.02)
-            .padding(.trailing, MenuBarMarks.rightExtent(size) + size.width * 0.02)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-        }
-    }
-
-    /// A messaging app's colour, for the icon in the notch and the glow.
-    private static let appColor = Color(red: 0.15, green: 0.83, blue: 0.4)
 }
 
 // MARK: - Small pickers

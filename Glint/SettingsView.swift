@@ -2,7 +2,7 @@ import SwiftUI
 
 /// The pages of the settings window, in sidebar order.
 enum SettingsPage: String, CaseIterable, Identifiable {
-    case about, apps, notifications, alarm, quiet, appearance, detection, general
+    case about, apps, notifications, alarm, quiet, appearance, notch, detection, general
 
     var id: String { rawValue }
 
@@ -14,6 +14,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .alarm: "Alarm Ayarları"
         case .quiet: "Odak ve Öncelik"
         case .appearance: "Görünüm Ayarları"
+        case .notch: "Çentik / Ada Ayarları"
         case .detection: "Algılama"
         case .general: "Genel Ayarlar"
         }
@@ -27,6 +28,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .alarm: "alarm.fill"
         case .quiet: "moon.fill"
         case .appearance: "paintpalette.fill"
+        case .notch: "capsule.fill"
         case .detection: "person.fill.viewfinder"
         case .general: "gearshape.fill"
         }
@@ -41,6 +43,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .alarm: .orange
         case .quiet: .indigo
         case .appearance: .pink
+        case .notch: .black
         case .detection: .teal
         case .general: .gray
         }
@@ -106,7 +109,7 @@ struct SettingsView: View {
                     row(.apps)
                 }
                 Section {
-                    ForEach([SettingsPage.notifications, .appearance, .alarm, .quiet, .detection]) { row($0) }
+                    ForEach([SettingsPage.notifications, .appearance, .notch, .alarm, .quiet, .detection]) { row($0) }
                 }
                 Section {
                     row(.general)
@@ -168,6 +171,7 @@ struct SettingsView: View {
         case .alarm: AlarmPage(controller: controller)
         case .quiet: QuietPage(controller: controller)
         case .appearance: AppearancePage(controller: controller)
+        case .notch: NotchPage(controller: controller)
         case .detection: DetectionPage(controller: controller)
         case .general: GeneralPage(controller: controller)
         }

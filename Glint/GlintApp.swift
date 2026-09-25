@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Pref.migrateLegacySettings()
         Pref.migrateNotifyStyle()
         Pref.migrateBannerPosition()
+        Pref.migrateNotchScreen()
         Pref.removeObsoleteSettings()
         WatchedAppStore.migrateToManualList()
 

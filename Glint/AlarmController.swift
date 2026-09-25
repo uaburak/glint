@@ -79,6 +79,8 @@ final class AlarmController {
     @ObservationIgnored private let dbReader = NotificationDatabaseReader.shared
     @ObservationIgnored private let overlay = AlarmOverlay()
     @ObservationIgnored private let glow = GlowOverlay()
+    @ObservationIgnored private let pointerBubble = PointerBubble()
+    @ObservationIgnored private let speaker = NotificationSpeaker()
     @ObservationIgnored private let bannerOverlay = NotificationBannerOverlay.shared
     @ObservationIgnored private var sleepGuard = SleepGuard()
     @ObservationIgnored private var timer: Timer?
@@ -716,6 +718,11 @@ final class AlarmController {
                 settings: settings,
                 withSound: !alarmRinging
             )
+            announceBeyondCards(
+                app: app, title: title, body: body,
+                volume: config.volume ?? settings.notifyVolume,
+                settings: settings, speaks: !alarmRinging
+            )
         }
 
         // The style decides whether the notification takes its place in the notch and whether a card
@@ -743,6 +750,21 @@ final class AlarmController {
             break
         case .glow:
             glow.show(colorHex: colorHex, intensity: settings.notifyGlowIntensity, duration: settings.notifyGlowDuration)
+        case .dim:
+            glow.show(colorHex: colorHex, intensity: settings.notifyGlowIntensity, duration: settings.notifyGlowDuration, dims: true)
+        }
+    }
+
+    /// The styles besides the notch and the card: a bubble by the pointer with who wrote, and the
+    /// sender (or the message) read aloud. `title` and `body` are nil until the text is known.
+    private func announceBeyondCards(app: WatchedApp, title: String?, body: String?, volume: Double, settings: AppSettings, speaks: Bool) {
+        guard settings.notifyEnabled else { return }
+        if settings.notifyNearPointer {
+            let sender = title.flatMap { $0.isEmpty ? nil : $0 } ?? app.name
+            pointerBubble.show(app: app, text: settings.notifyPreview.title(sender, app: app))
+        }
+        if settings.notifySpeaks, speaks {
+            speaker.speak(settings.speechContent.phrase(app: app.name, title: title, body: body), volume: volume)
         }
     }
 
@@ -862,9 +884,10 @@ final class AlarmController {
         }
 
         notify(colorHex: colorHex, soundID: soundID, volume: volume, settings: settings, withSound: true)
+        let testApp = app ?? WatchedApp.listed.first ?? WatchedApp.builtIn[0]
+        announceBeyondCards(app: testApp, title: "Ayşe Yılmaz", body: "Akşam görüşelim mi?", volume: volume, settings: settings, speaks: true)
 
         if settings.notifyStyle.showsMessage {
-            let testApp = app ?? WatchedApp.listed.first ?? WatchedApp.builtIn[0]
             // An app's own preview goes where its cards go; the general one to the general position.
             let position = app.map { bannerPosition(of: $0, settings: settings) } ?? settings.notifyBannerPosition
             bannerOverlay.show(

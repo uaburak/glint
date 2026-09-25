@@ -2,10 +2,18 @@ import AppKit
 import QuartzCore
 import SwiftUI
 
-/// A Teams-colored glow that hugs every screen's edges and fades inward, shown with each
-/// new-message notification. The windows are click-through, so it never gets in the way.
+/// The screen effect shown with each new-message notification, on every screen: a glow in the app's
+/// colour that hugs the edges and fades inward, or a dimming of the screen. The windows are
+/// click-through, so it never gets in the way.
 @MainActor
 final class GlowOverlay {
+    /// The glow lies over everything. The dimming stays below the cards and the notch, which it's
+    /// there to bring forward.
+    private static let glowLevel = NSWindow.Level.screenSaver
+    private static let dimLevel = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue - 1)
+    /// How dark the screen gets at full intensity.
+    private static let dimOpacity = 0.5
+
     /// One smooth pulse: a quick ease in, a slower ease out.
     private static let fadeIn: TimeInterval = 0.3
     private static let fadeOut: TimeInterval = 0.7
@@ -22,9 +30,9 @@ final class GlowOverlay {
         windows = NSScreen.screens.map(makeWindow)
     }
 
-    /// Glows for `duration` in total — fade in, hold, fade out. nil keeps it on until
-    /// `dismissIfPersistent()`, i.e. until the messages are read.
-    func show(colorHex: String, intensity: Double, duration: TimeInterval?) {
+    /// Glows (or dims the screen) for `duration` in total — fade in, hold, fade out. nil keeps it on
+    /// until `dismissIfPersistent()`, i.e. until the messages are read.
+    func show(colorHex: String, intensity: Double, duration: TimeInterval?, dims: Bool = false) {
         generation += 1
         hideWork?.cancel()
         hideWork = nil
@@ -34,10 +42,12 @@ final class GlowOverlay {
             windows.forEach { $0.orderOut(nil) }
             windows = screens.map(makeWindow)
         }
-        let view = EdgeGlowView(color: Color(hex: colorHex), intensity: intensity)
         for (window, screen) in zip(windows, screens) {
             window.setFrame(screen.frame, display: false)
-            window.contentView = NSHostingView(rootView: view)
+            window.level = dims ? Self.dimLevel : Self.glowLevel
+            window.contentView = dims
+                ? NSHostingView(rootView: AnyView(Color.black.opacity(Self.dimOpacity * intensity).ignoresSafeArea()))
+                : NSHostingView(rootView: AnyView(EdgeGlowView(color: Color(hex: colorHex), intensity: intensity)))
             window.orderFrontRegardless()
         }
         NSAnimationContext.runAnimationGroup { context in

@@ -26,6 +26,8 @@ final class NotificationBannerOverlay {
     static let notchGap: CGFloat = 8
     /// Notifications nobody opened wait in the notch; they go once read, or after this long.
     private static let waitingLifetime: TimeInterval = 30 * 60
+    /// “Until they're read”: long enough never to run out in practice.
+    private static let untilRead: TimeInterval = 7 * 24 * 60 * 60
     /// How long banners stay after the pointer leaves them.
     private static let lingerAfterHover: TimeInterval = 2.5
     /// Long enough for a removal animation to finish before a panel shrinks or hides.
@@ -98,6 +100,11 @@ final class NotificationBannerOverlay {
         popDuration.map(now.addingTimeInterval) ?? .distantFuture
     }
 
+    /// How long notifications nobody opened wait in the notch, from the notch's settings.
+    private var notchWaitingLifetime: TimeInterval {
+        notch.settings.waitingLifetime ?? Self.untilRead
+    }
+
     private func panel(at position: BannerPosition) -> BannerPanel {
         if let panel = panels[position] { return panel }
         let panel = BannerPanel(model: model, handlers: handlers)
@@ -122,10 +129,11 @@ final class NotificationBannerOverlay {
     @discardableResult
     func show(app: WatchedApp, title: String, body: String, position: BannerPosition, date: Date = Date(), thread: NotificationThread? = nil, popping: Bool = true, waits: Bool = true) -> UUID {
         let now = Date()
+        focusNotchOnPointer()
         let item = BannerStackModel.Item(title: title, body: body, date: date, thread: thread)
         // With a notch, notifications nobody opened wait in it; without one they go with their banner.
         let popsUntil = popping ? popEnd(from: now) : nil
-        let lifetime = waits && Notch.current != nil ? Self.waitingLifetime : (popDuration ?? Self.waitingLifetime)
+        let lifetime = waits && Notch.current != nil ? notchWaitingLifetime : (popDuration ?? Self.waitingLifetime)
         withAnimation(Self.arrival) {
             if !notchHovered {
                 model.showsAll = false
@@ -140,7 +148,7 @@ final class NotificationBannerOverlay {
         }
         startTimer()
         syncNotch()
-        if !popping {
+        if !popping, notch.settings.growsOnArrival {
             // Nothing pops up, so the island announces it by itself: long enough to be noticed, short
             // enough not to sit open while the message is still being written.
             notch.holdOpenBriefly(4)
@@ -159,6 +167,7 @@ final class NotificationBannerOverlay {
         else { return }
         let existing = model.stacks[stackIndex].items[itemIndex]
         let now = Date()
+        focusNotchOnPointer()
         withAnimation(.easeOut(duration: 0.2)) {
             model.stacks[stackIndex].items[itemIndex] = BannerStackModel.Item(
                 id: existing.id, title: title, body: body, date: existing.date, thread: thread ?? existing.thread
@@ -167,7 +176,7 @@ final class NotificationBannerOverlay {
             // the banner gets its full time on screen again, even if the count-only one had gone.
             let popsUntil = popEnd(from: now)
             model.stacks[stackIndex].popsUntil = popsUntil
-            let lifetime = Notch.current != nil ? Self.waitingLifetime : (popDuration ?? Self.waitingLifetime)
+            let lifetime = Notch.current != nil ? notchWaitingLifetime : (popDuration ?? Self.waitingLifetime)
             model.stacks[stackIndex].expiresAt = max(model.stacks[stackIndex].expiresAt, now.addingTimeInterval(lifetime), popsUntil)
         }
         startTimer()
@@ -401,12 +410,21 @@ final class NotificationBannerOverlay {
             return
         }
         notch.refresh(showing: true)
-        let holds = !model.stacks.isEmpty && (model.showsAll || model.stacks.contains { $0.popsUntil != nil })
+        // Open while the list is, and while a banner is up unless the island is to stay still for them.
+        let arriving = notch.settings.growsOnArrival && model.stacks.contains { $0.popsUntil != nil }
+        let holds = !model.stacks.isEmpty && (model.showsAll || arriving)
         if releasingNow, !holds {
             notch.releaseNow()
         } else {
             notch.holdsOpen = holds
         }
+    }
+
+    /// With an island on every display, a banner comes out of the one on the display the user is
+    /// working on. Not while the pointer is in the list or on a card: they stay where they are.
+    private func focusNotchOnPointer() {
+        guard !notchHovered, !model.hovered else { return }
+        Notch.focusOnPointer()
     }
 
     private func notchHoverChanged(_ hovering: Bool) {
@@ -687,7 +705,7 @@ private final class BannerPanel {
 
 /// A panel that always reports itself key and main. Glint never activates, and Liquid Glass in a
 /// window macOS thinks is inactive draws flat and dark, without its rim.
-private final class BannerPanelWindow: NSPanel {
+final class BannerPanelWindow: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
     override var isKeyWindow: Bool { true }

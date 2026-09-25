@@ -47,8 +47,9 @@ struct NotificationPage: View {
 
 // MARK: - Görünüm Ayarları
 
-/// How a notification looks: what the screen does (the glow), the ways the notification shows (the
-/// notch, a floating card, the menu bar's count), and their settings.
+/// How a notification looks: what the screen does (a glow, a dimming), the ways the notification
+/// shows (a floating card, the menu bar's count, a bubble by the pointer, a voice), and their
+/// settings. The notch has a page of its own.
 struct AppearancePage: View {
     let controller: AlarmController
     @AppStorage(Pref.notifyEffect) private var effectName = NotifyEffect.glow.rawValue
@@ -59,9 +60,9 @@ struct AppearancePage: View {
     @AppStorage(Pref.notifyBannerSeconds) private var bannerSeconds = 6.0
     @AppStorage(Pref.notifyPreview) private var previewName = MessagePreview.full.rawValue
     @AppStorage(Pref.showMenuBarCount) private var showMenuBarCount = true
-    @AppStorage(Pref.notchScreen) private var notchScreen = NotchScreen.notched.rawValue
-    @AppStorage(Pref.notchShowsAllApps) private var notchShowsAllApps = false
-    @AppStorage(Pref.notchHidesVirtualWhenEmpty) private var notchHidesVirtualWhenEmpty = true
+    @AppStorage(Pref.notifyNearPointer) private var nearPointer = false
+    @AppStorage(Pref.notifySpeaks) private var speaks = false
+    @AppStorage(Pref.speechContent) private var speechContent = SpeechContent.sender.rawValue
 
     private var effect: NotifyEffect { NotifyEffect(rawValue: effectName) ?? .glow }
     private var style: NotifyStyle { NotifyStyle(rawValue: styleName) ?? .full }
@@ -70,14 +71,20 @@ struct AppearancePage: View {
     var body: some View {
         Form {
             Section("Efekt Stilleri") {
-                HStack(alignment: .top, spacing: 8) {
-                    NotificationStyleOption(kind: .glow, title: "Işıma", isOn: glowBinding)
+                HStack(alignment: .top, spacing: 12) {
+                    ForEach([NotifyEffect.glow, .dim, .none]) { option in
+                        // Each effect with a notification's card at the top, the way it looks when one comes.
+                        StyleChoice(card: StyleCard(effect: option, content: .banner, symbol: option == .none ? "nosign" : nil), title: option.title, isOn: option == effect) {
+                            guard option != effect else { return }
+                            effectName = option.rawValue
+                            if option != .none { controller.testNotification() }
+                        }
+                    }
                 }
                 .padding(.vertical, 8)
-            }
 
-            if effect == .glow {
-                Section("Işıma") {
+                // The chosen effect's settings, right under it.
+                if effect != .none {
                     LabeledContent("Yoğunluk") {
                         HStack(spacing: 8) {
                             Image(systemName: "sun.min").foregroundStyle(.secondary)
@@ -93,49 +100,49 @@ struct AppearancePage: View {
                         Divider()
                         Text("Bildirimler okunana kadar").tag(0.0)
                     }
-                    HStack {
-                        Hint("Renk, uygulamanın kendi sayfasından seçilir.")
-                        Spacer()
-                        Button("Önizle") { controller.testNotification() }
-                    }
                 }
             }
 
             Section("Bildirim Stilleri") {
-                HStack(alignment: .top, spacing: 8) {
-                    NotificationStyleOption(kind: .notch, title: "Çentik", isOn: placeBinding(notch: true))
-                    NotificationStyleOption(kind: .banner, title: "Yüzen Bildirim", isOn: placeBinding(notch: false))
-                    NotificationStyleOption(kind: .menuBar, title: "Menü Çubuğu", isOn: $showMenuBarCount)
+                HStack(alignment: .top, spacing: 12) {
+                    toggle(StyleCard(content: .banner), "Yüzen Bildirim", placeBinding(notch: false))
+                    toggle(StyleCard(content: .menuBar), "Menü Çubuğu", $showMenuBarCount)
+                    toggle(StyleCard(content: .pointer), "İmleç Yanında", previewing($nearPointer))
+                    toggle(StyleCard(symbol: "speaker.wave.2.fill"), "Sesli Okuma", previewing($speaks))
                 }
                 .padding(.vertical, 8)
-            }
 
-            if style.showsNotch {
-                Section("Çentik") {
-                    Picker("Simgeler", selection: $notchShowsAllApps) {
-                        Text("Son bildirim gelen uygulama").tag(false)
-                        Text("Bildirimi olan tüm uygulamalar").tag(true)
-                    }
-                    Picker("Ekran", selection: $notchScreen) {
-                        ForEach(NotchScreen.allCases) { Text($0.title).tag($0.rawValue) }
-                    }
-                    if notchScreen == NotchScreen.main.rawValue {
-                        Toggle("Bildirim yokken sanal çentiği gizle", isOn: $notchHidesVirtualWhenEmpty)
-                        Hint("Ana ekranda çentik yoksa Glint menü çubuğunun ortasına bir çentik çizer.")
-                    } else if Notch.current == nil {
-                        Hint("Bu ekranlarda çentik yok. Ekran olarak Ana ekran seçilirse Glint bir çentik çizer.")
-                    }
-                }
-            }
-
-            if style.showsBanner {
-                Section("Yüzen Bildirim") {
+                // The settings of the styles that are on, right under them.
+                if style.showsBanner {
                     // Side by side across the row, growing with the window.
                     HStack(alignment: .top, spacing: 12) { cardPickers }
                         .padding(.vertical, 6)
                 }
+                if speaks {
+                    Picker("Sesli okuma", selection: $speechContent) {
+                        ForEach(SpeechContent.allCases) { Text($0.title).tag($0.rawValue) }
+                    }
+                }
             }
         }
+    }
+
+    /// A notification style, drawn on its own and on or off by a click on it.
+    private func toggle(_ card: StyleCard, _ title: String, _ isOn: Binding<Bool>) -> some View {
+        StyleChoice(card: card, title: title, isOn: isOn.wrappedValue) {
+            isOn.wrappedValue.toggle()
+        }
+    }
+
+    /// A style that shows what it does when it's switched on.
+    private func previewing(_ isOn: Binding<Bool>) -> Binding<Bool> {
+        Binding(
+            get: { isOn.wrappedValue },
+            set: { value in
+                isOn.wrappedValue = value
+                if value { controller.testNotification() }
+            }
+        )
     }
 
     @ViewBuilder
@@ -155,16 +162,6 @@ struct AppearancePage: View {
         Binding(
             get: { MessagePreview(rawValue: previewName) ?? .full },
             set: { previewName = $0.rawValue }
-        )
-    }
-
-    private var glowBinding: Binding<Bool> {
-        Binding(
-            get: { effect == .glow },
-            set: { isOn in
-                effectName = (isOn ? NotifyEffect.glow : .none).rawValue
-                if isOn { controller.testNotification() }
-            }
         )
     }
 
@@ -190,23 +187,3 @@ struct AppearancePage: View {
     }
 }
 
-/// A small picker with its name under it, as macOS names its thumbnails.
-private struct PickerWithLabel<Picker: View>: View {
-    let title: String
-    @ViewBuilder let picker: Picker
-
-    init(_ title: String, @ViewBuilder picker: () -> Picker) {
-        self.title = title
-        self.picker = picker()
-    }
-
-    var body: some View {
-        VStack(spacing: 8) {
-            picker
-            Text(title)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity)
-    }
-}

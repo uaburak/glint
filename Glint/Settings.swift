@@ -20,12 +20,26 @@ enum Pref {
     /// How long a card stays up, in seconds; 0 = until it's closed.
     static let notifyBannerSeconds = "notifyBannerSeconds"
     static let notifyPreview = "notifyPreview"
-    /// Which screen the notch island is on: `NotchScreen`.
-    static let notchScreen = "notchScreen"
+    /// What the island is on screens without a notch: `DrawnNotch`.
+    static let drawnNotch = "drawnNotch"
     /// Every app with notifications waiting in the island, side by side, instead of the newest one.
     static let notchShowsAllApps = "notchShowsAllApps"
-    /// A notch Glint draws itself only shows while notifications are waiting.
+    /// A notch or island Glint draws itself only shows while notifications are waiting.
     static let notchHidesVirtualWhenEmpty = "notchHidesVirtualWhenEmpty"
+    /// How long the pointer rests on the island before it opens, in seconds.
+    static let notchHoverDelay = "notchHoverDelay"
+    /// How long notifications wait in the notch, in minutes; 0 = until they're read.
+    static let notchWaitMinutes = "notchWaitMinutes"
+    /// The count on the island's icons.
+    static let notchShowsBadges = "notchShowsBadges"
+    /// The island grows for a moment when a notification comes, not only when it's hovered.
+    static let notchGrowsOnArrival = "notchGrowsOnArrival"
+    /// A bubble by the pointer with the app and the sender.
+    static let notifyNearPointer = "notifyNearPointer"
+    /// Glint says who wrote, aloud.
+    static let notifySpeaks = "notifySpeaks"
+    /// What it says: `SpeechContent`.
+    static let speechContent = "speechContent"
     static let notifySound = "notifySound"
     static let notifyVolume = "notifyVolume"
     static let quietDuringFocus = "quietDuringFocus"
@@ -61,9 +75,16 @@ enum Pref {
         notifyBannerPosition: BannerPosition.topRight.rawValue,
         notifyBannerSeconds: 6.0,
         notifyPreview: MessagePreview.full.rawValue,
-        notchScreen: NotchScreen.notched.rawValue,
+        drawnNotch: DrawnNotch.island.rawValue,
         notchShowsAllApps: false,
         notchHidesVirtualWhenEmpty: true,
+        notchHoverDelay: 0.0,
+        notchWaitMinutes: 30.0,
+        notchShowsBadges: true,
+        notchGrowsOnArrival: true,
+        notifyNearPointer: false,
+        notifySpeaks: false,
+        speechContent: SpeechContent.sender.rawValue,
         notifySound: "builtin.ding",
         notifyVolume: 0.6,
         quietDuringFocus: true,
@@ -90,6 +111,8 @@ enum Pref {
         "badgeFallback",
         // The glow and the banner each had a switch; `notifyStyle` carries both.
         "notifyGlow", "notifyBanner",
+        // Which one screen the island was on; `drawnNotch` now.
+        "notchScreen",
         "apnsKeyID", "apnsTeamID", "callDelayMinutes", "maxVolume", "notifyGlowColor", "pairingCode",
         "proximityDelay", "proximityDeviceID", "proximityDeviceName", "proximityEnabled",
         "proximityLostTimeout", "proximityRequireIdle", "proximityThreshold", "repeatCallMinutes",
@@ -141,6 +164,14 @@ enum Pref {
         }
     }
 
+    /// The island used to go on one screen, the notched one or the main one. Now the notched screen
+    /// always has it and the others get what `drawnNotch` says; whoever had a notch drawn on the main
+    /// screen keeps a drawn notch.
+    static func migrateNotchScreen(_ d: UserDefaults = .standard) {
+        guard d.string(forKey: "notchScreen") == "main", d.string(forKey: drawnNotch) == nil else { return }
+        d.set(DrawnNotch.notch.rawValue, forKey: drawnNotch)
+    }
+
     static func removeObsoleteSettings() {
         let d = UserDefaults.standard
         for key in obsoleteKeys where d.object(forKey: key) != nil {
@@ -180,14 +211,53 @@ enum NotifyStyle: String, CaseIterable, Identifiable {
     var showsMessage: Bool { self != .none }
 }
 
-/// What the screen does when a notification comes, in the app's own colour.
+/// What the screen does when a notification comes.
 enum NotifyEffect: String, CaseIterable, Identifiable {
-    /// Soft light along the screen's edges.
+    /// Soft light along the screen's edges, in the app's own colour.
     case glow
+    /// The screen darkens for a moment; the card and the notch stay bright above it.
+    case dim
     /// Nothing on screen.
     case none
 
     var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .glow: "Işıma"
+        case .dim: "Karartma"
+        case .none: "Efekt Yok"
+        }
+    }
+}
+
+/// What Glint says aloud for a notification.
+enum SpeechContent: String, CaseIterable, Identifiable {
+    /// Only which app it's from.
+    case app
+    /// Who wrote, and in which app.
+    case sender
+    /// Who wrote, and what.
+    case message
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .app: "Yalnızca uygulama"
+        case .sender: "Gönderen"
+        case .message: "Gönderen ve mesaj"
+        }
+    }
+
+    /// The words for a notification from `app`; `title` and `body` are nil until its text is known.
+    func phrase(app: String, title: String?, body: String?) -> String {
+        guard self != .app, let title, !title.isEmpty, title != app else { return "Yeni bildirim: \(app)" }
+        if self == .message, let body, !body.isEmpty {
+            return "\(title): \(body)"
+        }
+        return "\(title), \(app)"
+    }
 }
 
 enum AlarmStyle: String, CaseIterable, Identifiable {
@@ -251,28 +321,38 @@ enum MessagePreview: String, CaseIterable, Identifiable {
     }
 }
 
-/// Which screen Glint's notch island is on.
-enum NotchScreen: String, CaseIterable, Identifiable {
-    /// The built-in display's notch; none on a Mac without one.
-    case notched
-    /// The main display, the one with the menu bar: its notch, or one Glint draws.
-    case main
+/// What Glint draws for the island on a screen without a notch of its own: an external display, or
+/// a Mac that has none. A notched screen always has the island on its notch.
+enum DrawnNotch: String, CaseIterable, Identifiable {
+    /// A notch like a MacBook's, joined to the screen's top edge.
+    case notch
+    /// A capsule floating in the menu bar, shorter than a notch.
+    case island
+    /// Nothing: the island is only on a notched screen.
+    case none
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .notched: "Çentikli ekran"
-        case .main: "Ana ekran"
+        case .notch: "Çentik"
+        case .island: "Ada"
+        case .none: "Yok"
         }
     }
 }
 
-/// How the notch island behaves, from Görünüm Ayarları.
+/// How the notch island behaves, from Çentik / Ada Ayarları.
 struct NotchSettings: Equatable {
-    var screen: NotchScreen = .notched
+    var drawn: DrawnNotch = .island
     var showsAllApps = false
     var hidesVirtualWhenEmpty = true
+    /// How long the pointer rests on the shrunk island before it opens.
+    var hoverDelay: TimeInterval = 0
+    /// How long notifications wait in the notch; nil = until they're read.
+    var waitingLifetime: TimeInterval? = 30 * 60
+    var showsBadges = true
+    var growsOnArrival = true
 }
 
 enum BannerPosition: String, CaseIterable, Identifiable, Codable {
@@ -335,6 +415,10 @@ struct AppSettings {
     /// nil = a card stays up until it's closed or read.
     var notifyBannerDuration: TimeInterval?
     var notch: NotchSettings
+    var notifyPreview: MessagePreview
+    var notifyNearPointer: Bool
+    var notifySpeaks: Bool
+    var speechContent: SpeechContent
     var notifySoundID: String
     var notifyVolume: Double
     var quietDuringFocus: Bool
@@ -370,10 +454,18 @@ struct AppSettings {
             notifyBannerPosition: BannerPosition(rawValue: d.string(forKey: Pref.notifyBannerPosition) ?? "") ?? .topRight,
             notifyBannerDuration: bannerSeconds > 0 ? bannerSeconds : nil,
             notch: NotchSettings(
-                screen: NotchScreen(rawValue: d.string(forKey: Pref.notchScreen) ?? "") ?? .notched,
+                drawn: DrawnNotch(rawValue: d.string(forKey: Pref.drawnNotch) ?? "") ?? .island,
                 showsAllApps: d.bool(forKey: Pref.notchShowsAllApps),
-                hidesVirtualWhenEmpty: d.bool(forKey: Pref.notchHidesVirtualWhenEmpty)
+                hidesVirtualWhenEmpty: d.bool(forKey: Pref.notchHidesVirtualWhenEmpty),
+                hoverDelay: d.double(forKey: Pref.notchHoverDelay),
+                waitingLifetime: d.double(forKey: Pref.notchWaitMinutes) > 0 ? d.double(forKey: Pref.notchWaitMinutes) * 60 : nil,
+                showsBadges: d.bool(forKey: Pref.notchShowsBadges),
+                growsOnArrival: d.bool(forKey: Pref.notchGrowsOnArrival)
             ),
+            notifyPreview: MessagePreview(rawValue: d.string(forKey: Pref.notifyPreview) ?? "") ?? .full,
+            notifyNearPointer: d.bool(forKey: Pref.notifyNearPointer),
+            notifySpeaks: d.bool(forKey: Pref.notifySpeaks),
+            speechContent: SpeechContent(rawValue: d.string(forKey: Pref.speechContent) ?? "") ?? .sender,
             notifySoundID: d.string(forKey: Pref.notifySound) ?? "builtin.ding",
             notifyVolume: d.double(forKey: Pref.notifyVolume),
             quietDuringFocus: d.bool(forKey: Pref.quietDuringFocus),
